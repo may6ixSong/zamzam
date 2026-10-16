@@ -128,8 +128,8 @@ class MediaEngine(
             var maxPts = Long.MIN_VALUE
             var videoBytes = 0L
             while (true) {
+                if (ex.sampleTrackIndex < 0) break
                 val pts = ex.sampleTime
-                if (pts < 0) break
                 if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) keyframes.add(pts to videoBytes)
                 videoBytes += ex.sampleSize.coerceAtLeast(0L)
                 frames++
@@ -145,7 +145,7 @@ class MediaEngine(
                 ex.selectTrack(t.audio)
                 ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
                 var sum = 0L
-                while (ex.sampleTime >= 0) {
+                while (ex.sampleTrackIndex >= 0) {
                     sum += ex.sampleSize.coerceAtLeast(0L)
                     if (!ex.advance()) break
                 }
@@ -319,10 +319,8 @@ class MediaEngine(
             val state = CopyState(total)
             for ((i, seg) in segments.withIndex()) {
                 if (copySegment(muxer, videoOut, audioOut, seg, state) == 0) {
-                    throw IOException(
-                        if (segments.size > 1) "${i + 1}번 영상에서 영상 프레임을 읽지 못했어요"
-                        else "선택한 구간에서 영상 프레임을 읽지 못했어요",
-                    )
+                    val where = if (segments.size > 1) "${i + 1}번 영상에서" else "선택한 구간에서"
+                    throw IOException("$where 영상 프레임을 읽지 못했어요 (${diagnose(seg)})")
                 }
             }
 
@@ -369,8 +367,10 @@ class MediaEngine(
             vEx.selectTrack(t.video)
             // 처음부터면 탐색하지 않는다(첫 프레임 시각이 0 보다 뒤인 파일에서 '이전 키프레임' 탐색이 실패한다).
             if (seg.fromUs > 0) seekSafely(vEx, seg.fromUs)
+            // 끝 판정은 시각이 아니라 트랙 번호로 한다. 편집 목록(edit list)이 있는 파일은 첫 프레임 시각이
+            // 음수로 읽힐 수 있는데, 이를 '끝'으로 오인하면 프레임을 하나도 못 쓴다.
+            if (vEx.sampleTrackIndex < 0) return 0
             val start = vEx.sampleTime
-            if (start < 0) return 0
             val end = seg.toUs
             // 음성은 영상 트랙 길이까지만(합치기에서 다음 영상과 겹치지 않게). 길이 정보가 이상하면 무시한다.
             val trackDuration = if (t.videoFormat.containsKey(MediaFormat.KEY_DURATION)) {
@@ -408,10 +408,10 @@ class MediaEngine(
 
             while (!videoDone || !audioDone) {
                 if (cancelled.get()) throw CancelledException()
+                if (!videoDone && vEx.sampleTrackIndex < 0) { videoDone = true; continue }
+                if (!audioDone && aEx!!.sampleTrackIndex < 0) { audioDone = true; continue }
                 val vt = if (videoDone) Long.MAX_VALUE else vEx.sampleTime
-                if (!videoDone && vt < 0) { videoDone = true; continue }
                 val at = if (audioDone) Long.MAX_VALUE else aEx!!.sampleTime
-                if (!audioDone && at < 0) { audioDone = true; continue }
 
                 if (!videoDone && vt <= at) {
                     val sync = (vEx.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0
@@ -466,12 +466,29 @@ class MediaEngine(
         }
     }
 
+    /** 오류 보고용: 영상 트랙 형식과 처음 몇 샘플의 상태. */
+    private fun diagnose(seg: Segment): String = runCatching {
+        val ex = openExtractor(seg.uri)
+        try {
+            val t = tracksOf(ex)
+            ex.selectTrack(t.video)
+            val samples = (0 until 3).map {
+                val s = "${ex.sampleTrackIndex}/${ex.sampleTime}/${ex.sampleSize}/${ex.sampleFlags}"
+                ex.advance()
+                s
+            }
+            "${t.videoFormat.getString(MediaFormat.KEY_MIME)}, 트랙 ${ex.trackCount}개, 샘플 ${samples.joinToString(" ")}"
+        } finally {
+            ex.release()
+        }
+    }.getOrElse { "진단 실패: ${it.message}" }
+
     /** [t] 직전 키프레임으로. 실패하면(첫 샘플보다 앞 등) 가장 가까운 키프레임, 그래도 안 되면 처음으로. */
     private fun seekSafely(ex: MediaExtractor, t: Long) {
         ex.seekTo(t, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-        if (ex.sampleTime >= 0) return
+        if (ex.sampleTrackIndex >= 0) return
         ex.seekTo(t, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
-        if (ex.sampleTime >= 0) return
+        if (ex.sampleTrackIndex >= 0) return
         ex.seekTo(0, MediaExtractor.SEEK_TO_NEXT_SYNC)
     }
 
