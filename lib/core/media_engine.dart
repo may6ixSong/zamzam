@@ -59,8 +59,9 @@ class MediaEngine {
     return r ?? const [];
   }
 
-  Future<ExportResult> trim(String uri, {required int startUs, required int endUs}) =>
-      _export('trim', {'uri': uri, 'startUs': startUs, 'endUs': endUs});
+  /// [rotateCcw]: 왼쪽(반시계)으로 더 돌릴 각도(0/90/180/270). 회전 정보만 바꿔 무손실이다.
+  Future<ExportResult> trim(String uri, {required int startUs, required int endUs, int rotateCcw = 0}) =>
+      _export('trim', {'uri': uri, 'startUs': startUs, 'endUs': endUs, 'rotateCcw': rotateCcw});
 
   Future<ExportResult> merge(List<String> uris) => _export('merge', {'uris': uris});
 

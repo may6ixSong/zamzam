@@ -168,3 +168,31 @@ class LosslessNote extends StatelessWidget {
     ],
   );
 }
+
+/// 시스템이 원본 대신 변환한 사본을 넘겨줬을 때의 경고.
+class TranscodeWarning extends StatelessWidget {
+  const TranscodeWarning({super.key});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+    decoration: BoxDecoration(
+      color: Palette.bad.withValues(alpha: .1),
+      border: Border.all(color: Palette.bad.withValues(alpha: .35)),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: const Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.warning_amber_rounded, color: Palette.bad, size: 18),
+        SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            '휴대폰이 원본 대신 다시 인코딩한 사본을 넘겨줬어요. 이대로 자르면 원본보다 용량이 커질 수 있어요.',
+            style: TextStyle(fontSize: 12, height: 1.45, color: Color(0xFFFFD0D0)),
+          ),
+        ),
+      ],
+    ),
+  );
+}

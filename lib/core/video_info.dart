@@ -16,6 +16,9 @@ class VideoInfo {
     required this.audioChannels,
     required this.keyframesUs,
     required this.exactCut,
+    this.keyframeBytes = const [],
+    this.videoBytes,
+    this.audioBytes,
   });
 
   /// Android 는 content:// URI, iOS 는 앱 임시 폴더의 파일 경로.
@@ -42,6 +45,20 @@ class VideoInfo {
 
   /// true 면 시작점을 키프레임에 맞추지 않아도 정확히 잘린다(iOS).
   final bool exactCut;
+
+  /// [keyframesUs]와 같은 순서로, 각 키프레임 앞까지 쌓인 영상 데이터 바이트 수.
+  final List<int> keyframeBytes;
+
+  /// 실제로 읽힌 영상·음성 데이터 총량. 알 수 없으면 null.
+  final int? videoBytes;
+  final int? audioBytes;
+
+  /// 읽힌 데이터가 파일 크기보다 눈에 띄게 크면, 시스템이 원본 대신 변환한 사본을 넘겨준 것이다.
+  bool get looksTranscoded {
+    final v = videoBytes;
+    if (v == null || sizeBytes <= 0) return false;
+    return v + (audioBytes ?? 0) > sizeBytes * 1.15;
+  }
 
   bool get hasAudio => audioMime != null;
   bool get isPortrait => rotation % 180 != 0 ? width > height : height > width;
@@ -90,6 +107,9 @@ class VideoInfo {
     audioChannels: (m['channels'] as num?)?.toInt(),
     keyframesUs: [for (final k in (m['keyframesUs'] as List?) ?? const []) (k as num).toInt()],
     exactCut: m['exactCut'] as bool? ?? false,
+    keyframeBytes: [for (final k in (m['keyframeBytes'] as List?) ?? const []) (k as num).toInt()],
+    videoBytes: (m['videoBytes'] as num?)?.toInt(),
+    audioBytes: (m['audioBytes'] as num?)?.toInt(),
   );
 }
 
@@ -121,4 +141,42 @@ List<String> incompatibilityReasons(VideoInfo base, VideoInfo other) {
     reasons.add('오디오 형식이 달라요 (${other.audioLabel})');
   }
   return reasons;
+}
+
+/// [startUs, endUs) 구간을 그대로 복사했을 때의 예상 파일 크기.
+///
+/// 키프레임별 누적 데이터량이 있으면 그 사이를 선형 보간해 실제 구간의 비트레이트를 반영하고,
+/// 없으면 파일 크기를 길이 비율로 나눈다.
+int estimateBytes(VideoInfo info, int startUs, int endUs) {
+  final dur = info.durationUs;
+  if (dur <= 0 || endUs <= startUs) return 0;
+  final videoTotal = info.videoBytes;
+  final kfs = info.keyframesUs;
+  final cum = info.keyframeBytes;
+  if (videoTotal == null || kfs.isEmpty || cum.length != kfs.length) {
+    return (info.sizeBytes * (endUs - startUs) / dur).round();
+  }
+  double at(int t) {
+    if (t <= kfs.first) return cum.first.toDouble();
+    var lo = 0;
+    var hi = kfs.length - 1;
+    while (lo < hi) {
+      final mid = (lo + hi + 1) >> 1;
+      if (kfs[mid] <= t) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    final t0 = kfs[lo];
+    final b0 = cum[lo];
+    final t1 = lo + 1 < kfs.length ? kfs[lo + 1] : dur;
+    final b1 = lo + 1 < kfs.length ? cum[lo + 1] : videoTotal;
+    if (t1 <= t0) return b0.toDouble();
+    return b0 + (b1 - b0) * ((t.clamp(t0, t1) - t0) / (t1 - t0));
+  }
+
+  final video = at(endUs) - at(startUs);
+  final audio = (info.audioBytes ?? 0) * (endUs - startUs) / dur;
+  return (video + audio).round();
 }

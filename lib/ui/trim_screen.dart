@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
@@ -6,8 +8,8 @@ import '../core/media_engine.dart';
 import '../core/time_format.dart';
 import '../core/trim_range.dart';
 import '../core/video_info.dart';
-import 'export_flow.dart';
 import 'theme.dart';
+import 'trim_preview_screen.dart';
 import 'trim_timeline.dart';
 import 'video_view.dart';
 
@@ -208,8 +210,9 @@ class _TrimScreenState extends State<TrimScreen> {
 
   void _onDragEnd(TimelineTarget t) {
     _dragging = false;
-    // 손을 떼면 실제로 잘릴 시작 프레임을 보여준다.
+    // 손을 떼면(또는 태그를 탭하면) 실제로 잘릴 시작/끝 프레임을 보여준다.
     if (t == TimelineTarget.start) _setRange(_range, showStart: true);
+    if (t == TimelineTarget.end) _setRange(_range, showUs: _range.endUs);
   }
 
   void _submitStart(String text) {
@@ -284,10 +287,13 @@ class _TrimScreenState extends State<TrimScreen> {
     FocusScope.of(context).unfocus();
     await _ctrl?.pause();
     if (!mounted) return;
-    await runExport(
+    // 저장 전에 구간을 재생해 보고 회전할 수 있는 미리보기. 저장하거나 닫으면 이 화면 그대로 돌아온다.
+    await Navigator.push(
       context,
-      title: '새 동영상 만드는 중',
-      job: () => _engine.trim(info.uri, startUs: _range.startUs, endUs: _range.endUs),
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            TrimPreviewScreen(info: info, startUs: _range.startUs, actualStartUs: _actualStart, endUs: _range.endUs),
+      ),
     );
   }
 
@@ -340,11 +346,12 @@ class _TrimScreenState extends State<TrimScreen> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             children: [
               _fileInfoPills(info),
+              if (info.looksTranscoded) ...[const SizedBox(height: 10), const TranscodeWarning()],
               const SizedBox(height: 10),
               _player(),
               const SizedBox(height: 8),
               _controls(),
-              _timeline(52, 5),
+              _timeline(52, 5, pagePadding: 16),
               const SizedBox(height: 6),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -404,6 +411,7 @@ class _TrimScreenState extends State<TrimScreen> {
                       ],
                     ),
                   ),
+                  if (info.looksTranscoded) ...[const SizedBox(height: 12), const TranscodeWarning()],
                   const SizedBox(height: 12),
                   _summary(),
                   if (!info.exactCut) ...[
@@ -433,7 +441,7 @@ class _TrimScreenState extends State<TrimScreen> {
           ],
         ),
         const SizedBox(height: 10),
-        _timeline(84, 7),
+        _timeline(84, 7, pagePadding: 22),
         const SizedBox(height: 10),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -507,9 +515,13 @@ class _TrimScreenState extends State<TrimScreen> {
     );
   }
 
-  Widget _timeline(double height, int ticks) {
+  /// [pagePadding]: 타임라인 바깥 화면 여백. 화면 끝의 '뒤로 가기' 제스처 영역과 겹치지 않게 안쪽을 더 비운다.
+  Widget _timeline(double height, int ticks, {required double pagePadding}) {
     final info = _info!;
+    final g = MediaQuery.systemGestureInsetsOf(context);
+    final edge = math.max(math.max(g.left, g.right) + 10 - pagePadding, 0.0);
     return TrimTimeline(
+      edgePadding: edge,
       durationUs: info.durationUs,
       startUs: _range.startUs,
       actualStartUs: _actualStart,
@@ -569,13 +581,14 @@ class _TrimScreenState extends State<TrimScreen> {
   Widget _summary() {
     final info = _info!;
     final len = _range.endUs - _actualStart;
-    final est = info.durationUs == 0 ? 0 : (info.sizeBytes * len / info.durationUs).round();
-    final pct = info.durationUs == 0 ? 0 : (100 * len / info.durationUs).round();
+    final est = estimateBytes(info, _actualStart, _range.endUs);
+    final pct = info.sizeBytes <= 0 ? 0 : (100 * est / info.sizeBytes).round();
     return Panel(
       child: IntrinsicHeight(
         child: Row(
           children: [
             Expanded(
+              flex: 10,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,

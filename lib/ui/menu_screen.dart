@@ -142,59 +142,62 @@ class _MenuCard extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Material(
-    borderRadius: BorderRadius.circular(22),
-    clipBehavior: Clip.antiAlias,
-    child: Ink(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: colors),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: LayoutBuilder(
-            builder: (context, c) => Stack(
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (c.maxHeight >= 200) ...[
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: .18),
-                          borderRadius: BorderRadius.circular(16),
+  // 두 카드가 같은 크기가 되도록 받은 공간을 꽉 채운다.
+  Widget build(BuildContext context) => SizedBox.expand(
+    child: Material(
+      borderRadius: BorderRadius.circular(22),
+      clipBehavior: Clip.antiAlias,
+      child: Ink(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: colors),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: LayoutBuilder(
+              builder: (context, c) => Stack(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (c.maxHeight >= 200) ...[
+                        Container(
+                          width: 52,
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: .18),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Icon(icon, color: Colors.white, size: 26),
                         ),
-                        child: Icon(icon, color: Colors.white, size: 26),
-                      ),
-                      const SizedBox(height: 14),
-                    ],
-                    Text(
-                      title,
-                      style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800, color: Colors.white),
-                    ),
-                    if (c.maxHeight >= 110) ...[
-                      const SizedBox(height: 8),
+                        const SizedBox(height: 14),
+                      ],
                       Text(
-                        body,
-                        style: TextStyle(fontSize: 13.5, height: 1.5, color: Colors.white.withValues(alpha: .82)),
+                        title,
+                        style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w800, color: Colors.white),
                       ),
+                      if (c.maxHeight >= 110) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          body,
+                          style: TextStyle(fontSize: 13.5, height: 1.5, color: Colors.white.withValues(alpha: .82)),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(color: Colors.white.withValues(alpha: .18), shape: BoxShape.circle),
-                    child: const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
                   ),
-                ),
-              ],
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(color: Colors.white.withValues(alpha: .18), shape: BoxShape.circle),
+                      child: const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

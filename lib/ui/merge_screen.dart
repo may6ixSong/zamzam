@@ -109,6 +109,38 @@ class _MergeScreenState extends State<MergeScreen> {
     });
   }
 
+  /// 확인을 받은 뒤 불러온 영상을 모두 비우고 새로 고른다(원본 파일은 그대로).
+  Future<void> _reset() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('처음부터 다시 할까요?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        content: Text(
+          '불러온 동영상 ${_clips.length}개를 목록에서 모두 지워요.\n갤러리의 원본 파일은 지워지지 않아요.',
+          style: const TextStyle(height: 1.5),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Palette.bad, foregroundColor: Colors.white),
+            child: const Text('초기화'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final old = _preview;
+    setState(() {
+      _clips.clear();
+      _selected = 0;
+      _preview = null;
+      _previewClip = null;
+    });
+    await old?.dispose();
+    if (mounted) await _add();
+  }
+
   Future<void> _loadPreview(_Clip clip) async {
     if (_previewLoading) return;
     _previewLoading = true;
@@ -158,6 +190,13 @@ class _MergeScreenState extends State<MergeScreen> {
       appBar: AppBar(
         title: const Text('동영상 합치기'),
         actions: [
+          if (_clips.isNotEmpty)
+            TextButton.icon(
+              onPressed: _adding ? null : _reset,
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('초기화'),
+              style: TextButton.styleFrom(foregroundColor: Palette.muted),
+            ),
           Padding(
             padding: const EdgeInsets.only(right: 10),
             child: FilledButton.icon(
@@ -352,13 +391,15 @@ class _MergeScreenState extends State<MergeScreen> {
                           style: TextStyle(fontSize: 11, color: bad ? const Color(0xFFFF9B9B) : Palette.muted),
                         ),
                         const SizedBox(height: 4),
-                        Row(
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 3,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Text(
                               formatBytes(info.sizeBytes),
                               style: const TextStyle(fontSize: 11, color: Palette.muted, fontFeatures: tabular),
                             ),
-                            const SizedBox(width: 6),
                             if (i == 0)
                               const Badge2.ok('기준')
                             else if (bad)

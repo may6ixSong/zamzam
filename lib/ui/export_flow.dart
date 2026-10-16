@@ -5,8 +5,8 @@ import '../core/media_engine.dart';
 import '../core/time_format.dart';
 import 'theme.dart';
 
-/// 진행률 다이얼로그를 띄운 채 [job]을 실행하고, 끝나면 결과를 보여준다.
-Future<void> runExport(
+/// 진행률 다이얼로그를 띄운 채 [job]을 실행하고, 끝나면 결과를 보여준다. 저장에 성공하면 true.
+Future<bool> runExport(
   BuildContext context, {
   required String title,
   required Future<ExportResult> Function() job,
@@ -35,16 +35,18 @@ Future<void> runExport(
   }
   navigator.pop();
   if (result != null) {
-    if (!context.mounted) return;
+    if (!context.mounted) return true;
     await showDialog<void>(
       context: context,
       builder: (_) => _DoneDialog(result: result!),
     );
+    return true;
   } else if (error != null) {
     messenger.showSnackBar(SnackBar(content: Text('만들지 못했어요: $error')));
   } else {
     messenger.showSnackBar(const SnackBar(content: Text('취소했어요')));
   }
+  return false;
 }
 
 class _ProgressDialog extends StatelessWidget {

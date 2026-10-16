@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -9,7 +10,9 @@ enum TimelineTarget { start, end, playhead }
 
 /// 썸네일 띠 + 노란 구간 틀(양 끝 손잡이) + 흰 재생 위치 선.
 ///
-/// 손잡이는 띠 바깥으로 [handleWidth]만큼 나오므로 좌우에 그만큼 여백을 둔다.
+/// 시작 시간 태그는 띠 위, 끝 시간 태그는 띠 아래에 두어 서로 겹치지 않는다.
+/// 태그나 손잡이를 잡고 끌면 해당 지점이 움직이고, 탭하면 그 지점 화면을 보여준다.
+/// 좌우 끝은 시스템 '뒤로 가기' 제스처 영역([edgePadding])만큼 비워 둔다.
 class TrimTimeline extends StatefulWidget {
   const TrimTimeline({
     super.key,
@@ -25,6 +28,7 @@ class TrimTimeline extends StatefulWidget {
     required this.onDragEnd,
     this.stripHeight = 52,
     this.tickCount = 5,
+    this.edgePadding = 0,
   });
 
   final int durationUs;
@@ -39,8 +43,11 @@ class TrimTimeline extends StatefulWidget {
   final void Function(TimelineTarget target) onDragEnd;
   final double stripHeight;
   final int tickCount;
+  final double edgePadding;
 
   static const handleWidth = 16.0;
+  static const tagHeight = 28.0;
+  static const tagWidth = 76.0;
 
   @override
   State<TrimTimeline> createState() => _TrimTimelineState();
@@ -53,76 +60,102 @@ class _TrimTimelineState extends State<TrimTimeline> {
   @override
   Widget build(BuildContext context) {
     const hw = TrimTimeline.handleWidth;
+    const tagH = TrimTimeline.tagHeight;
+    const tagW = TrimTimeline.tagWidth;
+    const gap = 8.0;
+    final h = widget.stripHeight;
+    final pad = math.max(widget.edgePadding, hw);
+    // 세로 배치: [시작 태그][간격][썸네일 띠][간격][끝 태그][눈금 시간]
+    const stripTop = tagH + gap;
+    final endTagTop = stripTop + h + gap;
+    final ticksTop = endTagTop + tagH + 6;
+    final totalH = ticksTop + 16;
+
     return LayoutBuilder(
       builder: (context, c) {
-        final w = c.maxWidth - hw * 2;
-        double x(int us) => hw + w * (us / widget.durationUs).clamp(0.0, 1.0);
-        int usAt(double dx) => (((dx - hw) / w).clamp(0.0, 1.0) * widget.durationUs).round();
+        final w = c.maxWidth - pad * 2;
+        double x(int us) => pad + w * (us / widget.durationUs).clamp(0.0, 1.0);
+        int usAt(double dx) => (((dx - pad) / w).clamp(0.0, 1.0) * widget.durationUs).round();
         final xs = x(widget.actualStartUs);
         final xe = x(widget.endUs);
         final xp = x(widget.playheadUs);
-        final h = widget.stripHeight;
-        const flagH = 30.0;
+        double tagLeft(double cx) => (cx - tagW / 2).clamp(0.0, c.maxWidth - tagW);
 
-        TimelineTarget pick(double dx) {
-          // 손잡이 근처를 잡으면 손잡이, 아니면 재생 위치.
-          final ds = (dx - (xs - hw / 2)).abs();
-          final de = (dx - (xe + hw / 2)).abs();
-          const reach = 28.0;
-          if (ds <= reach || de <= reach) return ds <= de ? TimelineTarget.start : TimelineTarget.end;
+        TimelineTarget pick(Offset p) {
+          bool onTag(double cx) => p.dx >= tagLeft(cx) - 6 && p.dx <= tagLeft(cx) + tagW + 6;
+          if (p.dy < stripTop) {
+            return onTag(xs) ? TimelineTarget.start : TimelineTarget.playhead;
+          }
+          if (p.dy >= endTagTop) {
+            return onTag(xe) ? TimelineTarget.end : TimelineTarget.playhead;
+          }
+          // 띠 위: 가까운 손잡이. 두 손잡이가 붙어 있으면 위쪽 절반은 시작, 아래쪽 절반은 끝.
+          const reach = 26.0;
+          final ds = (p.dx - (xs - hw / 2)).abs();
+          final de = (p.dx - (xe + hw / 2)).abs();
+          if (ds <= reach && de <= reach) {
+            return p.dy < stripTop + h / 2 ? TimelineTarget.start : TimelineTarget.end;
+          }
+          if (ds <= reach) return TimelineTarget.start;
+          if (de <= reach) return TimelineTarget.end;
           return TimelineTarget.playhead;
         }
 
-        void begin(double dx) {
-          final t = pick(dx);
+        void begin(Offset p) {
+          final t = pick(p);
           _active = t;
           _grabOffset = switch (t) {
-            TimelineTarget.start => dx - x(widget.startUs),
-            TimelineTarget.end => dx - xe,
+            TimelineTarget.start => p.dx - x(widget.startUs),
+            TimelineTarget.end => p.dx - xe,
             TimelineTarget.playhead => 0,
           };
+          setState(() {});
           widget.onDragStart(t);
-          if (t == TimelineTarget.playhead) widget.onDrag(t, usAt(dx));
+          if (t == TimelineTarget.playhead) widget.onDrag(t, usAt(p.dx));
         }
 
-        void update(double dx) {
+        void update(Offset p) {
           final t = _active;
-          if (t != null) widget.onDrag(t, usAt(dx - _grabOffset));
+          if (t != null) widget.onDrag(t, usAt(p.dx - _grabOffset));
         }
 
         void end() {
           final t = _active;
           _active = null;
+          setState(() {});
           if (t != null) widget.onDragEnd(t);
         }
 
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onHorizontalDragStart: (d) => begin(d.localPosition.dx),
-          onHorizontalDragUpdate: (d) => update(d.localPosition.dx),
+          onHorizontalDragStart: (d) => begin(d.localPosition),
+          onHorizontalDragUpdate: (d) => update(d.localPosition),
           onHorizontalDragEnd: (_) => end(),
-          onHorizontalDragCancel: end,
-          onTapDown: (d) => begin(d.localPosition.dx),
+          onHorizontalDragCancel: () {
+            if (_active != null) end();
+          },
+          onTapDown: (d) => begin(d.localPosition),
           onTapUp: (_) => end(),
+          onTapCancel: () {},
           child: SizedBox(
-            height: flagH + h + 32,
+            height: totalH,
             child: Stack(
               clipBehavior: Clip.none,
               children: [
-                // 키프레임 눈금
+                // 키프레임 눈금(띠 바로 위)
                 if (widget.keyframesUs.isNotEmpty)
                   Positioned(
-                    left: hw,
+                    left: pad,
                     width: w,
-                    top: flagH - 8,
-                    height: 5,
+                    top: stripTop - 7,
+                    height: 4,
                     child: CustomPaint(painter: _KeyframePainter(widget.keyframesUs, widget.durationUs)),
                   ),
                 // 썸네일 띠
                 Positioned(
-                  left: hw,
+                  left: pad,
                   width: w,
-                  top: flagH,
+                  top: stripTop,
                   height: h,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(10),
@@ -140,9 +173,9 @@ class _TrimTimelineState extends State<TrimTimeline> {
                 ),
                 // 잘려 나갈 부분 어둡게
                 Positioned(
-                  left: hw,
-                  width: (xs - hw).clamp(0, w),
-                  top: flagH,
+                  left: pad,
+                  width: (xs - pad).clamp(0, w),
+                  top: stripTop,
                   height: h,
                   child: Container(
                     decoration: const BoxDecoration(
@@ -153,8 +186,8 @@ class _TrimTimelineState extends State<TrimTimeline> {
                 ),
                 Positioned(
                   left: xe,
-                  right: hw,
-                  top: flagH,
+                  right: pad,
+                  top: stripTop,
                   height: h,
                   child: Container(
                     decoration: const BoxDecoration(
@@ -167,7 +200,7 @@ class _TrimTimelineState extends State<TrimTimeline> {
                 Positioned(
                   left: xs - hw,
                   width: xe - xs + hw * 2,
-                  top: flagH - 3,
+                  top: stripTop - 3,
                   height: h + 6,
                   child: IgnorePointer(
                     child: Container(
@@ -181,16 +214,13 @@ class _TrimTimelineState extends State<TrimTimeline> {
                     ),
                   ),
                 ),
-                _grip(xs - hw / 2, flagH, h),
-                _grip(xe + hw / 2, flagH, h),
-                // 시간 깃발
-                _flag(xs, widget.actualStartUs, c.maxWidth, highlight: _active == TimelineTarget.start),
-                _flag(xe, widget.endUs, c.maxWidth, highlight: _active == TimelineTarget.end),
+                _grip(xs - hw / 2, stripTop, h),
+                _grip(xe + hw / 2, stripTop, h),
                 // 재생 위치
                 Positioned(
                   left: xp - 1.5,
-                  top: flagH - 9,
-                  height: h + 18,
+                  top: stripTop - 6,
+                  height: h + 12,
                   width: 3,
                   child: IgnorePointer(
                     child: Container(
@@ -202,22 +232,28 @@ class _TrimTimelineState extends State<TrimTimeline> {
                     ),
                   ),
                 ),
-                Positioned(
-                  left: xp - 6,
-                  top: flagH - 11,
-                  child: IgnorePointer(
-                    child: Container(
-                      width: 12,
-                      height: 12,
-                      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                    ),
-                  ),
+                // 시작 태그(위) / 끝 태그(아래)
+                _tag(
+                  left: tagLeft(xs),
+                  top: 0,
+                  pointerX: xs - tagLeft(xs),
+                  pointDown: true,
+                  label: '시작 ${formatTime(widget.actualStartUs)}',
+                  active: _active == TimelineTarget.start,
+                ),
+                _tag(
+                  left: tagLeft(xe),
+                  top: endTagTop,
+                  pointerX: xe - tagLeft(xe),
+                  pointDown: false,
+                  label: '끝 ${formatTime(widget.endUs)}',
+                  active: _active == TimelineTarget.end,
                 ),
                 // 아래 눈금 시간
                 Positioned(
-                  left: hw,
+                  left: pad,
                   width: w,
-                  top: flagH + h + 12,
+                  top: ticksTop,
                   child: _Ticks(durationUs: widget.durationUs, count: widget.tickCount),
                 ),
               ],
@@ -240,28 +276,40 @@ class _TrimTimelineState extends State<TrimTimeline> {
     ),
   );
 
-  Widget _flag(double cx, int us, double maxW, {required bool highlight}) {
-    const fw = 64.0;
-    final left = (cx - fw / 2).clamp(0.0, maxW - fw);
+  Widget _tag({
+    required double left,
+    required double top,
+    required double pointerX,
+    required bool pointDown,
+    required String label,
+    required bool active,
+  }) {
+    const tagW = TrimTimeline.tagWidth;
+    const tagH = TrimTimeline.tagHeight;
+    final color = active ? Colors.white : Palette.trim;
+    final arrowX = pointerX.clamp(10.0, tagW - 10.0);
     return Positioned(
       left: left,
-      top: 0,
-      width: fw,
+      top: top,
+      width: tagW,
+      height: tagH,
       child: IgnorePointer(
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(
-              color: highlight ? Colors.white : Palette.trim,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              formatTime(us),
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF2B2100),
-                fontFeatures: tabular,
+        child: CustomPaint(
+          painter: _TagPainter(color: color, arrowX: arrowX, pointDown: pointDown),
+          child: Padding(
+            padding: EdgeInsets.only(top: pointDown ? 0 : 5, bottom: pointDown ? 5 : 0),
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF2B2100),
+                    fontFeatures: tabular,
+                  ),
+                ),
               ),
             ),
           ),
@@ -269,6 +317,41 @@ class _TrimTimelineState extends State<TrimTimeline> {
       ),
     );
   }
+}
+
+/// 둥근 사각형 + 손잡이를 가리키는 작은 삼각형.
+class _TagPainter extends CustomPainter {
+  _TagPainter({required this.color, required this.arrowX, required this.pointDown});
+
+  final Color color;
+  final double arrowX;
+  final bool pointDown;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const arrow = 5.0;
+    final paint = Paint()..color = color;
+    final body = pointDown
+        ? Rect.fromLTWH(0, 0, size.width, size.height - arrow)
+        : Rect.fromLTWH(0, arrow, size.width, size.height - arrow);
+    canvas.drawRRect(RRect.fromRectAndRadius(body, const Radius.circular(7)), paint);
+    final path = Path();
+    if (pointDown) {
+      path
+        ..moveTo(arrowX - arrow, body.bottom)
+        ..lineTo(arrowX + arrow, body.bottom)
+        ..lineTo(arrowX, size.height);
+    } else {
+      path
+        ..moveTo(arrowX - arrow, body.top)
+        ..lineTo(arrowX + arrow, body.top)
+        ..lineTo(arrowX, 0);
+    }
+    canvas.drawPath(path..close(), paint);
+  }
+
+  @override
+  bool shouldRepaint(_TagPainter old) => old.color != color || old.arrowX != arrowX || old.pointDown != pointDown;
 }
 
 class _Ticks extends StatelessWidget {

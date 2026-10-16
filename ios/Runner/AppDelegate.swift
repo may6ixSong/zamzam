@@ -64,7 +64,8 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
       let path = args["uri"] as? String ?? ""
       let start = (args["startUs"] as? NSNumber)?.int64Value ?? 0
       let end = (args["endUs"] as? NSNumber)?.int64Value ?? 0
-      trim(path: path, startUs: start, endUs: end, result)
+      let rotateCcw = (args["rotateCcw"] as? NSNumber)?.intValue ?? 0
+      trim(path: path, startUs: start, endUs: end, rotateCcw: rotateCcw, result)
     case "merge":
       merge(paths: args["uris"] as? [String] ?? [], result)
     case "cancel":
@@ -225,16 +226,59 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
 
   // MARK: - export
 
-  private func trim(path: String, startUs: Int64, endUs: Int64, _ result: @escaping FlutterResult) {
+  /// [rotateCcw]: 화면에서 왼쪽(반시계)으로 더 돌릴 각도. 트랙의 회전 정보만 바꾸므로 무손실이다.
+  private func trim(path: String, startUs: Int64, endUs: Int64, rotateCcw: Int, _ result: @escaping FlutterResult) {
     let asset = AVURLAsset(url: URL(fileURLWithPath: path))
-    guard let s = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
+    let range = CMTimeRange(
+      start: CMTime(value: startUs, timescale: 1_000_000),
+      end: CMTime(value: endUs, timescale: 1_000_000))
+    var source: AVAsset = asset
+    var timeRange: CMTimeRange? = range
+    if rotateCcw % 360 != 0 {
+      // 회전하려면 컴포지션으로 구간을 옮겨 담고 트랙 방향을 바꾼다.
+      let comp = AVMutableComposition()
+      do {
+        guard let v = asset.tracks(withMediaType: .video).first,
+          let vt = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+        else { throw EngineError(message: "영상 트랙이 없는 파일이에요") }
+        try vt.insertTimeRange(range, of: v, at: .zero)
+        let t = v.preferredTransform
+        let current = Int((atan2(Double(t.b), Double(t.a)) * 180 / .pi).rounded())
+        let angle = ((current - rotateCcw) % 360 + 360) % 360
+        vt.preferredTransform = transform(angle: angle, size: v.naturalSize)
+        if let a = asset.tracks(withMediaType: .audio).first,
+          let audioTrack = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+        {
+          let audioRange = a.timeRange.intersection(range)
+          if !audioRange.isEmpty {
+            try audioTrack.insertTimeRange(audioRange, of: a, at: audioRange.start - range.start)
+          }
+        }
+      } catch {
+        result(FlutterError(code: "FAILED", message: error.localizedDescription, details: nil))
+        return
+      }
+      source = comp
+      timeRange = nil
+    }
+    guard let s = AVAssetExportSession(asset: source, presetName: AVAssetExportPresetPassthrough) else {
       result(FlutterError(code: "FAILED", message: "이 영상은 내보낼 수 없어요", details: nil))
       return
     }
-    s.timeRange = CMTimeRange(
-      start: CMTime(value: startUs, timescale: 1_000_000),
-      end: CMTime(value: endUs, timescale: 1_000_000))
+    if let timeRange = timeRange { s.timeRange = timeRange }
     runExport(s, durationUs: endUs - startUs, result)
+  }
+
+  /// 시계 방향 [angle]도로 보이게 하는 표준 회전 행렬.
+  private func transform(angle: Int, size: CGSize) -> CGAffineTransform {
+    let w = abs(size.width)
+    let h = abs(size.height)
+    switch angle {
+    case 90: return CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: h, ty: 0)
+    case 180: return CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: w, ty: h)
+    case 270: return CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: w)
+    default: return .identity
+    }
   }
 
   private func merge(paths: [String], _ result: @escaping FlutterResult) {

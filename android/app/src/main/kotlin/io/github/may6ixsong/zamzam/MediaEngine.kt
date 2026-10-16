@@ -66,8 +66,9 @@ class MediaEngine(
             }
             "trim" -> {
                 cancelled.set(false)
+                val rotateCcw = call.argument<Number>("rotateCcw")?.toInt() ?: 0
                 background(exportExecutor, result) {
-                    trim(call.uri("uri"), call.long("startUs"), call.long("endUs"))
+                    trim(call.uri("uri"), call.long("startUs"), call.long("endUs"), rotateCcw)
                 }
             }
             "merge" -> {
@@ -119,22 +120,37 @@ class MediaEngine(
             val t = tracksOf(ex)
             val vf = t.videoFormat
 
-            // 영상 샘플을 훑어 키프레임 위치와 프레임 수를 센다(데이터는 읽지 않는다).
+            // 영상 샘플을 훑어 키프레임 위치, 프레임 수, 키프레임마다 쌓인 데이터량을 센다(데이터는 읽지 않는다).
             ex.selectTrack(t.video)
-            val keyframes = ArrayList<Long>()
+            val keyframes = ArrayList<Pair<Long, Long>>()
             var frames = 0
             var minPts = Long.MAX_VALUE
             var maxPts = Long.MIN_VALUE
+            var videoBytes = 0L
             while (true) {
                 val pts = ex.sampleTime
                 if (pts < 0) break
-                if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) keyframes.add(pts)
+                if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) keyframes.add(pts to videoBytes)
+                videoBytes += ex.sampleSize.coerceAtLeast(0L)
                 frames++
                 if (pts < minPts) minPts = pts
                 if (pts > maxPts) maxPts = pts
                 if (!ex.advance()) break
             }
-            keyframes.sort()
+            keyframes.sortBy { it.first }
+
+            var audioBytes: Long? = null
+            if (t.audio >= 0) {
+                ex.unselectTrack(t.video)
+                ex.selectTrack(t.audio)
+                ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                var sum = 0L
+                while (ex.sampleTime >= 0) {
+                    sum += ex.sampleSize.coerceAtLeast(0L)
+                    if (!ex.advance()) break
+                }
+                audioBytes = sum
+            }
 
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
             val durationUs = durationMs?.times(1000)
@@ -162,7 +178,10 @@ class MediaEngine(
                 "audioMime" to af?.getString(MediaFormat.KEY_MIME),
                 "sampleRate" to af?.getInteger(MediaFormat.KEY_SAMPLE_RATE),
                 "channels" to af?.getInteger(MediaFormat.KEY_CHANNEL_COUNT),
-                "keyframesUs" to keyframes,
+                "keyframesUs" to keyframes.map { it.first },
+                "keyframeBytes" to keyframes.map { it.second },
+                "videoBytes" to videoBytes,
+                "audioBytes" to audioBytes,
                 "exactCut" to false,
             )
         } finally {
@@ -227,10 +246,16 @@ class MediaEngine(
 
     // ------------------------------------------------------------------ export
 
-    private fun trim(uri: Uri, startUs: Long, endUs: Long): Map<String, Any?> {
+    /**
+     * [rotateCcw]: 화면에서 왼쪽(반시계)으로 더 돌릴 각도(90 의 배수).
+     * 영상 데이터는 그대로 두고 MP4 의 회전 정보만 바꾸므로 무손실이다.
+     */
+    private fun trim(uri: Uri, startUs: Long, endUs: Long, rotateCcw: Int): Map<String, Any?> {
         val probeEx = openExtractor(uri)
         val tracks = try { tracksOf(probeEx) } finally { probeEx.release() }
-        return export(listOf(Segment(uri, startUs, endUs)), tracks, sourceMeta(uri))
+        val meta = sourceMeta(uri)
+        val rotated = SourceMeta(Math.floorMod(meta.rotation - rotateCcw, 360), meta.latitude, meta.longitude)
+        return export(listOf(Segment(uri, startUs, endUs)), tracks, rotated)
     }
 
     private fun merge(uris: List<Uri>): Map<String, Any?> {

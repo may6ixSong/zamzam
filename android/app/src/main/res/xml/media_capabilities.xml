@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  이 앱은 HEVC/HDR 원본을 그대로 다룬다고 시스템에 알린다.
+  선언하지 않으면 Android 가 원본 대신 H.264/SDR 로 다시 인코딩한 사본을 넘겨줄 수 있고,
+  그러면 '무손실' 복사라도 결과 용량이 커진다.
+-->
+<media-capabilities xmlns:android="http://schemas.android.com/apk/res/android">
+    <format android:name="HEVC" supported="true" />
+    <format android:name="HDR10" supported="true" />
+    <format android:name="HDR10Plus" supported="true" />
+    <format android:name="Dolby-Vision" supported="true" />
+    <format android:name="HLG" supported="true" />
+    <format android:name="SlowMotion" supported="true" />
+</media-capabilities>

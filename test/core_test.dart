@@ -121,6 +121,53 @@ void main() {
     });
   });
 
+  group('estimateBytes', () {
+    VideoInfo dense({List<int> kfs = const [0, 10000000, 20000000], List<int> cum = const [0, 1000, 9000]}) =>
+        VideoInfo(
+          uri: 'u',
+          name: 'n',
+          sizeBytes: 10000,
+          durationUs: 30000000,
+          width: 1,
+          height: 1,
+          rotation: 0,
+          videoMime: 'video/avc',
+          videoSignature: null,
+          fps: 30,
+          audioMime: null,
+          audioSampleRate: null,
+          audioChannels: null,
+          keyframesUs: kfs,
+          exactCut: false,
+          keyframeBytes: cum,
+          videoBytes: 10000,
+          audioBytes: 300,
+        );
+    test('follows the real bitrate of the range', () {
+      // 0~10s 1000B, 10~20s 8000B, 20~30s 1000B, 음성 300B 균등
+      expect(estimateBytes(dense(), 0, 10000000), 1000 + 100);
+      expect(estimateBytes(dense(), 10000000, 20000000), 8000 + 100);
+      expect(estimateBytes(dense(), 15000000, 25000000), 4000 + 500 + 100);
+    });
+    test('falls back to the length ratio without sample data', () {
+      expect(estimateBytes(_video(), 0, 1), 1);
+      expect(estimateBytes(dense(cum: const []), 0, 15000000), 5000);
+    });
+    test('flags a transcoded copy', () {
+      expect(dense().looksTranscoded, isFalse);
+      final big = VideoInfo.fromMap({
+        'uri': 'u',
+        'durationUs': 1,
+        'width': 1,
+        'height': 1,
+        'videoMime': 'video/avc',
+        'size': 1000,
+        'videoBytes': 3000,
+      });
+      expect(big.looksTranscoded, isTrue);
+    });
+  });
+
   test('formatBytes', () {
     expect(formatBytes(72 * 1024 * 1024), '72.0 MB');
     expect(formatBytes(382 * 1024 * 1024), '382 MB');
