@@ -142,7 +142,7 @@ class MediaEngine(
             val span = if (frames > 1) maxPts - minPts else 0L
             val fps = when {
                 span > 0 -> (frames - 1) * 1_000_000.0 / span
-                vf.containsKey(MediaFormat.KEY_FRAME_RATE) -> vf.getNumber(MediaFormat.KEY_FRAME_RATE).toDouble()
+                vf.containsKey(MediaFormat.KEY_FRAME_RATE) -> vf.getNumber(MediaFormat.KEY_FRAME_RATE)?.toDouble() ?: 30.0
                 else -> 30.0
             }
             val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
