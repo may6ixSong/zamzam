@@ -62,7 +62,8 @@ jobs:
           fi
 
       - name: Build APK
-        run: flutter build apk --release --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }}
+        # 갤럭시 등 최신 폰은 모두 arm64 라 그것만 넣어 용량을 줄인다.
+        run: flutter build apk --release --target-platform android-arm64 --build-name=1.0.${{ github.run_number }} --build-number=${{ github.run_number }}
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk ZamZam-1.0.${{ github.run_number }}.apk
