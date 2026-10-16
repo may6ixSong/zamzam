@@ -128,7 +128,7 @@ class MediaEngine(
             while (true) {
                 val pts = ex.sampleTime
                 if (pts < 0) break
-                if (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) keyframes.add(pts)
+                if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) keyframes.add(pts)
                 frames++
                 if (pts < minPts) minPts = pts
                 if (pts > maxPts) maxPts = pts
@@ -272,16 +272,22 @@ class MediaEngine(
             if (seg.toUs != Long.MAX_VALUE) seg.toUs - seg.fromUs else durationOf(seg.uri)
         }.coerceAtLeast(1L)
         val out = createOutput()
-        var muxer: MediaMuxer? = null
+        val muxer = try {
+            MediaMuxer(out.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+        } catch (e: Throwable) {
+            discard(out)
+            throw e
+        }
         var started = false
+        var released = false
         try {
-            muxer = MediaMuxer(out.pfd.fileDescriptor, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer.setOrientationHint(meta.rotation)
-            if (meta.latitude != null && meta.longitude != null) {
-                runCatching { muxer.setLocation(meta.latitude, meta.longitude) }
-            }
+            val lat = meta.latitude
+            val lon = meta.longitude
+            if (lat != null && lon != null) runCatching { muxer.setLocation(lat, lon) }
             val videoOut = muxer.addTrack(tracks.videoFormat)
-            val audioOut = tracks.audioFormat?.let { muxer.addTrack(it) } ?: -1
+            val audioFormat = tracks.audioFormat
+            val audioOut = if (audioFormat != null) muxer.addTrack(audioFormat) else -1
             muxer.start()
             started = true
 
@@ -289,10 +295,10 @@ class MediaEngine(
             for (seg in segments) copySegment(muxer, videoOut, audioOut, seg, state)
             if (state.videoSamples == 0) throw IOException("선택한 구간에 영상 프레임이 없어요")
 
-            muxer.stop()
             started = false
+            muxer.stop()
+            released = true
             muxer.release()
-            muxer = null
             val size = out.pfd.statSize
             out.pfd.close()
             val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
@@ -305,12 +311,16 @@ class MediaEngine(
                 "durationUs" to state.offsetUs,
             )
         } catch (e: Throwable) {
-            runCatching { if (started) muxer?.stop() }
-            runCatching { muxer?.release() }
-            runCatching { out.pfd.close() }
-            runCatching { ctx.contentResolver.delete(out.uri, null, null) }
+            if (started) runCatching { muxer.stop() }
+            if (!released) runCatching { muxer.release() }
+            discard(out)
             throw e
         }
+    }
+
+    private fun discard(out: Output) {
+        runCatching { out.pfd.close() }
+        runCatching { ctx.contentResolver.delete(out.uri, null, null) }
     }
 
     /**
@@ -370,7 +380,7 @@ class MediaEngine(
                 if (!audioDone && at < 0) { audioDone = true; continue }
 
                 if (!videoDone && vt <= at) {
-                    val sync = vEx.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0
+                    val sync = (vEx.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0
                     if (vt >= end) {
                         // 끝 이후 첫 키프레임(또는 충분히 지난 지점)에서 멈춘다.
                         // 그 사이 프레임은 순서가 섞인 B-프레임일 수 있어 더 읽어 본다.
