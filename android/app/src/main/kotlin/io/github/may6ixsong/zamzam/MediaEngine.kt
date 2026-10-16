@@ -317,8 +317,14 @@ class MediaEngine(
             started = true
 
             val state = CopyState(total)
-            for (seg in segments) copySegment(muxer, videoOut, audioOut, seg, state)
-            if (state.videoSamples == 0) throw IOException("선택한 구간에 영상 프레임이 없어요")
+            for ((i, seg) in segments.withIndex()) {
+                if (copySegment(muxer, videoOut, audioOut, seg, state) == 0) {
+                    throw IOException(
+                        if (segments.size > 1) "${i + 1}번 영상에서 영상 프레임을 읽지 못했어요"
+                        else "선택한 구간에서 영상 프레임을 읽지 못했어요",
+                    )
+                }
+            }
 
             started = false
             muxer.stop()
@@ -354,27 +360,30 @@ class MediaEngine(
      * 시작은 [Segment.fromUs] 바로 앞 키프레임부터(그래야 디코딩이 가능하다), 끝은 [Segment.toUs] 직전 프레임까지.
      * 영상·음성 샘플을 원본 시간 순으로 번갈아 써서 재생기가 읽기 좋게 섞어 둔다.
      */
-    private fun copySegment(muxer: MediaMuxer, videoOut: Int, audioOut: Int, seg: Segment, st: CopyState) {
+    /** 쓴 영상 프레임 수를 돌려준다. */
+    private fun copySegment(muxer: MediaMuxer, videoOut: Int, audioOut: Int, seg: Segment, st: CopyState): Int {
         val vEx = openExtractor(seg.uri)
         var aEx: MediaExtractor? = null
         try {
             val t = tracksOf(vEx)
             vEx.selectTrack(t.video)
-            vEx.seekTo(seg.fromUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            // 처음부터면 탐색하지 않는다(첫 프레임 시각이 0 보다 뒤인 파일에서 '이전 키프레임' 탐색이 실패한다).
+            if (seg.fromUs > 0) seekSafely(vEx, seg.fromUs)
             val start = vEx.sampleTime
-            if (start < 0) return
-            // 합치기: 영상 트랙 길이까지만(음성이 조금 더 길어도 다음 영상과 겹치지 않게).
-            val videoTrackEnd = if (t.videoFormat.containsKey(MediaFormat.KEY_DURATION)) {
-                t.videoFormat.getLong(MediaFormat.KEY_DURATION)
+            if (start < 0) return 0
+            val end = seg.toUs
+            // 음성은 영상 트랙 길이까지만(합치기에서 다음 영상과 겹치지 않게). 길이 정보가 이상하면 무시한다.
+            val trackDuration = if (t.videoFormat.containsKey(MediaFormat.KEY_DURATION)) {
+                t.videoFormat.getLong(MediaFormat.KEY_DURATION).takeIf { it > 0 } ?: Long.MAX_VALUE
             } else {
                 Long.MAX_VALUE
             }
-            val end = minOf(seg.toUs, videoTrackEnd)
+            val audioEnd = minOf(end, trackDuration)
 
             if (audioOut >= 0 && t.audio >= 0) {
                 aEx = openExtractor(seg.uri).also {
                     it.selectTrack(t.audio)
-                    it.seekTo(start, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                    if (start > 0) seekSafely(it, start)
                 }
             }
 
@@ -428,7 +437,7 @@ class MediaEngine(
                     vEx.advance()
                 } else {
                     val ex = aEx!!
-                    if (at >= end) { audioDone = true; continue }
+                    if (at >= audioEnd) { audioDone = true; continue }
                     if (at >= start) {
                         val pts = at - start + st.offsetUs
                         if (pts > st.lastAudioPts) {
@@ -446,14 +455,24 @@ class MediaEngine(
 
             if (written > 0) {
                 val frame = if (written > 1) (lastPts - firstPts) / (written - 1) else 33_333L
-                val length = if (seg.toUs != Long.MAX_VALUE) minOf(lastPts + frame, end) - start else lastPts + frame - start
+                val length = minOf(lastPts + frame, end) - start
                 st.offsetUs += length
                 st.doneUs += length
             }
+            return written
         } finally {
             vEx.release()
             aEx?.release()
         }
+    }
+
+    /** [t] 직전 키프레임으로. 실패하면(첫 샘플보다 앞 등) 가장 가까운 키프레임, 그래도 안 되면 처음으로. */
+    private fun seekSafely(ex: MediaExtractor, t: Long) {
+        ex.seekTo(t, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        if (ex.sampleTime >= 0) return
+        ex.seekTo(t, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+        if (ex.sampleTime >= 0) return
+        ex.seekTo(0, MediaExtractor.SEEK_TO_NEXT_SYNC)
     }
 
     private fun initialBufferSize(t: Tracks): Int {
