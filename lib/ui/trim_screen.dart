@@ -10,6 +10,7 @@ import '../core/trim_range.dart';
 import '../core/video_info.dart';
 import 'theme.dart';
 import 'trim_preview_screen.dart';
+import 'time_fields.dart';
 import 'trim_timeline.dart';
 import 'video_view.dart';
 
@@ -35,30 +36,20 @@ class _TrimScreenState extends State<TrimScreen> {
   bool _seeking = false;
   int? _pendingSeek;
 
-  final _startText = TextEditingController();
-  final _endText = TextEditingController();
-  final _startFocus = FocusNode();
-  final _endFocus = FocusNode();
+  /// 시작·끝·재생 위치를 옮길 때 보여주는 그 시점 화면. 재생을 시작하면 지운다.
+  Uint8List? _still;
+  bool _stillBusy = false;
+  (int, bool)? _stillPending;
 
   @override
   void initState() {
     super.initState();
-    _startFocus.addListener(() {
-      if (!_startFocus.hasFocus) _submitStart(_startText.text);
-    });
-    _endFocus.addListener(() {
-      if (!_endFocus.hasFocus) _submitEnd(_endText.text);
-    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _pick());
   }
 
   @override
   void dispose() {
     _ctrl?.dispose();
-    _startText.dispose();
-    _endText.dispose();
-    _startFocus.dispose();
-    _endFocus.dispose();
     super.dispose();
   }
 
@@ -67,8 +58,6 @@ class _TrimScreenState extends State<TrimScreen> {
     if (info == null || info.exactCut) return _range.startUs;
     return keyframeAtOrBefore(info.keyframesUs, _range.startUs);
   }
-
-  int get _frameUs => (usPerSecond / (_info?.fps ?? 30)).round();
 
   // ---------------------------------------------------------------- loading
 
@@ -104,9 +93,9 @@ class _TrimScreenState extends State<TrimScreen> {
         _thumbs = const [];
         _range = TrimRange(0, info.durationUs);
         _playhead = 0;
+        _still = null;
         _loading = false;
       });
-      _syncTexts();
       final thumbs = await _engine.thumbnails(info.uri, count: 12, height: 120);
       if (mounted && _info == info) setState(() => _thumbs = thumbs);
     } on PlatformException catch (e) {
@@ -159,6 +148,7 @@ class _TrimScreenState extends State<TrimScreen> {
       await c.pause();
       return;
     }
+    setState(() => _still = null);
     final pos = c.value.position.inMicroseconds;
     if (_loop && (pos < _actualStart || pos >= _range.endUs - 50000)) {
       await c.seekTo(Duration(microseconds: _actualStart));
@@ -170,20 +160,44 @@ class _TrimScreenState extends State<TrimScreen> {
 
   // ---------------------------------------------------------------- range edits
 
-  /// [showStart]면 범위를 바꾼 뒤 실제 시작 프레임(키프레임)을 보여준다.
-  void _setRange(TrimRange r, {int? showUs, bool showStart = false}) {
+  /// 그 시점 화면을 받아 영상 자리에 보여준다. 연달아 들어오면 직전 요청이 끝난 뒤 마지막 것만 처리해
+  /// 손가락을 따라 화면이 계속 바뀐다. [exact]가 아니면 가까운 키프레임이라 빠르다.
+  Future<void> _showFrame(int us, {bool exact = false}) async {
+    final info = _info;
+    if (info == null) return;
+    if (_stillBusy) {
+      _stillPending = (us, exact);
+      return;
+    }
+    _stillBusy = true;
+    (int, bool)? next = (us, exact);
+    while (next != null) {
+      final (t, e) = next;
+      _stillPending = null;
+      try {
+        final bytes = await _engine.frameAt(info.uri, t, exact: e);
+        if (!mounted || _info != info) break;
+        if (bytes != null && !(_ctrl?.value.isPlaying ?? false)) setState(() => _still = bytes);
+      } on PlatformException {
+        // 화면 한 장을 못 받아도 편집은 계속할 수 있다.
+      }
+      next = _stillPending;
+    }
+    _stillBusy = false;
+  }
+
+  /// 범위를 바꾸고, [showUs] 또는 실제 시작([showStart]) 시점 화면을 보여준다.
+  /// [settle]이면 정확한 프레임을 받고 재생 위치도 그곳으로 옮긴다(손을 뗐을 때·직접 입력했을 때).
+  void _setRange(TrimRange r, {int? showUs, bool showStart = false, bool settle = true}) {
     _range = r;
     final show = showStart ? _actualStart : showUs;
     setState(() {
       if (show != null) _playhead = show;
     });
-    _syncTexts();
-    if (show != null) _seek(show);
-  }
-
-  void _syncTexts() {
-    if (!_startFocus.hasFocus) _startText.text = formatTime(_range.startUs);
-    if (!_endFocus.hasFocus) _endText.text = formatTime(_range.endUs);
+    if (show == null) return;
+    _ctrl?.pause();
+    _showFrame(show, exact: settle);
+    if (settle) _seek(show);
   }
 
   void _onDragStart(TimelineTarget t) {
@@ -196,88 +210,75 @@ class _TrimScreenState extends State<TrimScreen> {
     final info = _info!;
     switch (t) {
       case TimelineTarget.start:
-        final r = moveStart(_range, us);
-        _setRange(r, showUs: r.startUs);
+        final r = moveStartSec(_range, us, info.durationUs);
+        if (r != _range) _setRange(r, showUs: r.startUs, settle: false);
       case TimelineTarget.end:
-        final r = moveEnd(_range, us, info.durationUs);
-        _setRange(r, showUs: r.endUs);
+        final r = moveEndSec(_range, us, info.durationUs);
+        if (r != _range) _setRange(r, showUs: r.endUs, settle: false);
       case TimelineTarget.playhead:
         final p = us.clamp(0, info.durationUs);
         setState(() => _playhead = p);
-        _seek(p);
+        _showFrame(p);
     }
   }
 
   void _onDragEnd(TimelineTarget t) {
     _dragging = false;
-    // 손을 떼면(또는 태그를 탭하면) 실제로 잘릴 시작/끝 프레임을 보여준다.
-    if (t == TimelineTarget.start) _setRange(_range, showStart: true);
-    if (t == TimelineTarget.end) _setRange(_range, showUs: _range.endUs);
+    // 손을 떼면(또는 태그를 탭하면) 실제로 잘릴 시작/끝 프레임을 정확히 보여준다.
+    switch (t) {
+      case TimelineTarget.start:
+        _setRange(_range, showStart: true);
+      case TimelineTarget.end:
+        _setRange(_range, showUs: _range.endUs);
+      case TimelineTarget.playhead:
+        _showFrame(_playhead, exact: true);
+        _seek(_playhead);
+    }
   }
 
-  void _submitStart(String text) {
-    final info = _info;
-    if (info == null) return;
-    final v = parseTime(text);
-    if (v == null) {
-      _toast('시간 형식이 올바르지 않아요 (예: 1:12.4)');
-      _syncTexts();
-      return;
-    }
-    final r = moveStart(_range, v);
-    if (r.startUs != v) _toast('끝보다 최소 1초 앞이어야 해서 ${formatTime(r.startUs)}(으)로 맞췄어요');
+  void _submitStart(int us) {
+    final info = _info!;
+    final r = moveStartSec(_range, us, info.durationUs);
+    if (r.startUs != us) _toast('끝보다 최소 1초 앞이어야 해서 ${formatTime(r.startUs, decimals: 0)}(으)로 맞췄어요');
     _setRange(r, showStart: true);
   }
 
-  void _submitEnd(String text) {
-    final info = _info;
-    if (info == null) return;
-    final v = parseTime(text);
-    if (v == null) {
-      _toast('시간 형식이 올바르지 않아요 (예: 2:10.8)');
-      _syncTexts();
-      return;
-    }
-    final r = moveEnd(_range, v, info.durationUs);
-    if (r.endUs != v) {
+  void _submitEnd(int us) {
+    final info = _info!;
+    final r = moveEndSec(_range, us, info.durationUs);
+    if (r.endUs ~/ usPerSecond != us ~/ usPerSecond) {
       _toast(
-        v > info.durationUs
-            ? '영상 길이를 넘어서 끝(${formatTime(r.endUs)})으로 맞췄어요'
-            : '시작보다 최소 1초 뒤여야 해서 ${formatTime(r.endUs)}(으)로 맞췄어요',
+        us > info.durationUs
+            ? '영상 길이를 넘어서 끝(${formatTime(r.endUs, decimals: 0)})으로 맞췄어요'
+            : '시작보다 최소 1초 뒤여야 해서 ${formatTime(r.endUs, decimals: 0)}(으)로 맞췄어요',
       );
     }
     _setRange(r, showUs: r.endUs);
   }
 
   void _stepStart(int dir) {
-    final info = _info!;
-    int? target;
-    if (info.exactCut || info.keyframesUs.isEmpty) {
-      target = _range.startUs + dir * _frameUs;
-    } else {
-      target = dir < 0
-          ? previousKeyframe(info.keyframesUs, _actualStart)
-          : nextKeyframe(info.keyframesUs, _actualStart);
-    }
-    if (target == null) return;
-    final r = moveStart(_range, target);
+    final r = moveStartSec(_range, _range.startUs + dir * usPerSecond, _info!.durationUs);
     _setRange(r, showStart: true);
   }
 
   void _stepEnd(int dir) {
-    final r = moveEnd(_range, _range.endUs + dir * _frameUs, _info!.durationUs);
+    // 영상 끝(정수 초가 아닐 수 있음)에서 한 칸 앞으로 가면 그 아래 정수 초로.
+    final base = dir < 0 && _range.endUs % usPerSecond != 0
+        ? (_range.endUs ~/ usPerSecond + 1) * usPerSecond
+        : _range.endUs;
+    final r = moveEndSec(_range, base + dir * usPerSecond, _info!.durationUs);
     _setRange(r, showUs: r.endUs);
   }
 
   void _startHere() {
-    final r = moveStart(_range, _playhead);
-    if (r.startUs != _playhead) _toast('끝보다 최소 1초 앞이어야 해요');
+    final r = moveStartSec(_range, _playhead, _info!.durationUs);
+    if ((r.startUs - _playhead).abs() >= usPerSecond) _toast('끝보다 최소 1초 앞이어야 해요');
     _setRange(r, showStart: true);
   }
 
   void _endHere() {
-    final r = moveEnd(_range, _playhead, _info!.durationUs);
-    if (r.endUs != _playhead) _toast('시작보다 최소 1초 뒤여야 해요');
+    final r = moveEndSec(_range, _playhead, _info!.durationUs);
+    if ((r.endUs - _playhead).abs() >= usPerSecond) _toast('시작보다 최소 1초 뒤여야 해요');
     _setRange(r, showUs: r.endUs);
   }
 
@@ -480,8 +481,13 @@ class _TrimScreenState extends State<TrimScreen> {
     ],
   );
 
-  Widget _player() =>
-      VideoView(controller: _ctrl, positionUs: _playhead, durationUs: _info!.durationUs, onTogglePlay: _togglePlay);
+  Widget _player() => VideoView(
+    controller: _ctrl,
+    positionUs: _playhead,
+    durationUs: _info!.durationUs,
+    onTogglePlay: _togglePlay,
+    still: _still,
+  );
 
   Widget _controls() {
     final c = _ctrl;
@@ -542,13 +548,11 @@ class _TrimScreenState extends State<TrimScreen> {
     final snapped = !info.exactCut && _actualStart != _range.startUs;
     return _TimeInput(
       label: '시작',
-      controller: _startText,
-      focusNode: _startFocus,
+      valueUs: _range.startUs,
       onSubmitted: _submitStart,
       onPrev: () => _stepStart(-1),
       onNext: () => _stepStart(1),
       onHere: _startHere,
-      stepTooltip: info.exactCut ? '한 프레임' : '키프레임',
       sub: snapped
           ? Text.rich(
               TextSpan(
@@ -568,14 +572,12 @@ class _TrimScreenState extends State<TrimScreen> {
 
   Widget _endInput() => _TimeInput(
     label: '끝',
-    controller: _endText,
-    focusNode: _endFocus,
+    valueUs: _range.endUs,
     onSubmitted: _submitEnd,
     onPrev: () => _stepEnd(-1),
     onNext: () => _stepEnd(1),
     onHere: _endHere,
-    stepTooltip: '한 프레임',
-    sub: const Text('프레임 단위로 정확히 끝나요'),
+    sub: Text(_range.endUs == _info!.durationUs ? '영상 끝까지 포함해요' : '이 위치까지 포함해요'),
   );
 
   Widget _summary() {
@@ -595,7 +597,7 @@ class _TrimScreenState extends State<TrimScreen> {
                 children: [
                   const Text('선택 구간', style: TextStyle(fontSize: 11.5, color: Palette.muted)),
                   Text(
-                    formatTime(len),
+                    formatTime(len, decimals: 0),
                     style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, fontFeatures: tabular),
                   ),
                 ],
@@ -633,24 +635,20 @@ class _TrimScreenState extends State<TrimScreen> {
 class _TimeInput extends StatelessWidget {
   const _TimeInput({
     required this.label,
-    required this.controller,
-    required this.focusNode,
+    required this.valueUs,
     required this.onSubmitted,
     required this.onPrev,
     required this.onNext,
     required this.onHere,
-    required this.stepTooltip,
     required this.sub,
   });
 
   final String label;
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final ValueChanged<String> onSubmitted;
+  final int valueUs;
+  final ValueChanged<int> onSubmitted;
   final VoidCallback onPrev;
   final VoidCallback onNext;
   final VoidCallback onHere;
-  final String stepTooltip;
   final Widget sub;
 
   @override
@@ -693,36 +691,13 @@ class _TimeInput extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 7),
-        TextField(
-          controller: controller,
-          focusNode: focusNode,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9:.]'))],
-          textInputAction: TextInputAction.done,
-          onSubmitted: onSubmitted,
-          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, fontFeatures: tabular),
-          cursorColor: Palette.trim,
-          decoration: InputDecoration(
-            isDense: true,
-            filled: true,
-            fillColor: Palette.s2,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(11),
-              borderSide: const BorderSide(color: Palette.line, width: 1.5),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(11),
-              borderSide: const BorderSide(color: Palette.trim, width: 1.5),
-            ),
-          ),
-        ),
+        TimeFields(valueUs: valueUs, onSubmitted: onSubmitted),
         const SizedBox(height: 7),
         Row(
           children: [
-            sq(const Icon(Icons.skip_previous_rounded, size: 20), onPrev, '이전 $stepTooltip'),
+            sq(const Icon(Icons.remove_rounded, size: 20), onPrev, '1초 앞으로'),
             const SizedBox(width: 6),
-            sq(const Icon(Icons.skip_next_rounded, size: 20), onNext, '다음 $stepTooltip'),
+            sq(const Icon(Icons.add_rounded, size: 20), onNext, '1초 뒤로'),
             const SizedBox(width: 6),
             sq(
               const Text('현재 위치', maxLines: 1, style: TextStyle(fontSize: 12, color: Color(0xFFC8CCD4))),

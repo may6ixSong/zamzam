@@ -238,7 +238,7 @@ class _TrimTimelineState extends State<TrimTimeline> {
                   top: 0,
                   pointerX: xs - tagLeft(xs),
                   pointDown: true,
-                  label: '시작 ${formatTime(widget.actualStartUs)}',
+                  label: '시작 ${formatTime(widget.startUs, decimals: 0)}',
                   active: _active == TimelineTarget.start,
                 ),
                 _tag(
@@ -246,7 +246,7 @@ class _TrimTimelineState extends State<TrimTimeline> {
                   top: endTagTop,
                   pointerX: xe - tagLeft(xe),
                   pointDown: false,
-                  label: '끝 ${formatTime(widget.endUs)}',
+                  label: '끝 ${formatTime(widget.endUs, decimals: 0)}',
                   active: _active == TimelineTarget.end,
                 ),
                 // 아래 눈금 시간

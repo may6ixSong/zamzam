@@ -38,6 +38,9 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
   private var pendingPick: FlutterResult?
   private var session: AVAssetExportSession?
   private var progressTimer: Timer?
+  private let frameQueue = DispatchQueue(label: "zamzam.frame")
+  private var frameGenerator: AVAssetImageGenerator?
+  private var framePath: String?
 
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: "zamzam/media", binaryMessenger: messenger)
@@ -60,6 +63,15 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
       let count = (args["count"] as? NSNumber)?.intValue ?? 1
       let height = (args["height"] as? NSNumber)?.intValue ?? 120
       background(result) { self.thumbnails(path: path, count: count, height: height) }
+    case "frameAt":
+      let path = args["uri"] as? String ?? ""
+      let us = (args["us"] as? NSNumber)?.int64Value ?? 0
+      let height = (args["height"] as? NSNumber)?.intValue ?? 360
+      let exact = args["exact"] as? Bool ?? false
+      frameQueue.async {
+        let data = self.frameAt(path: path, us: us, height: height, exact: exact)
+        DispatchQueue.main.async { result(data.map { FlutterStandardTypedData(bytes: $0) }) }
+      }
     case "trim":
       let path = args["uri"] as? String ?? ""
       let start = (args["startUs"] as? NSNumber)?.int64Value ?? 0
@@ -222,6 +234,24 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
       out.append(FlutterStandardTypedData(bytes: data))
     }
     return out
+  }
+
+  /// [us] 시점 화면 한 장(JPEG). [exact]가 아니면 근처 프레임이라 빠르다.
+  private func frameAt(path: String, us: Int64, height: Int, exact: Bool) -> Data? {
+    if framePath != path {
+      let gen = AVAssetImageGenerator(asset: AVURLAsset(url: URL(fileURLWithPath: path)))
+      gen.appliesPreferredTrackTransform = true
+      gen.maximumSize = CGSize(width: height * 3, height: height)
+      frameGenerator = gen
+      framePath = path
+    }
+    guard let gen = frameGenerator else { return nil }
+    let tolerance = exact ? CMTime.zero : CMTime(seconds: 1, preferredTimescale: 600)
+    gen.requestedTimeToleranceBefore = tolerance
+    gen.requestedTimeToleranceAfter = tolerance
+    let t = CMTime(value: max(us, 0), timescale: 1_000_000)
+    guard let cg = try? gen.copyCGImage(at: t, actualTime: nil) else { return nil }
+    return UIImage(cgImage: cg).jpegData(compressionQuality: 0.8)
   }
 
   // MARK: - export

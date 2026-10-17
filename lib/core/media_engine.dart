@@ -59,6 +59,10 @@ class MediaEngine {
     return r ?? const [];
   }
 
+  /// [us] 시점 화면 한 장(JPEG). [exact]가 아니면 가까운 키프레임이라 빠르다.
+  Future<Uint8List?> frameAt(String uri, int us, {int height = 360, bool exact = false}) =>
+      _channel.invokeMethod<Uint8List>('frameAt', {'uri': uri, 'us': us, 'height': height, 'exact': exact});
+
   /// [rotateCcw]: 왼쪽(반시계)으로 더 돌릴 각도(0/90/180/270). 회전 정보만 바꿔 무손실이다.
   Future<ExportResult> trim(String uri, {required int startUs, required int endUs, int rotateCcw = 0}) =>
       _export('trim', {'uri': uri, 'startUs': startUs, 'endUs': endUs, 'rotateCcw': rotateCcw});

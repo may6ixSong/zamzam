@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
@@ -19,6 +20,7 @@ class VideoView extends StatelessWidget {
     required this.durationUs,
     required this.onTogglePlay,
     this.label,
+    this.still,
   });
 
   final VideoPlayerController? controller;
@@ -26,6 +28,9 @@ class VideoView extends StatelessWidget {
   final int durationUs;
   final VoidCallback onTogglePlay;
   final String? label;
+
+  /// 멈춰 있을 때 영상 대신 보여줄 그 시점 화면(JPEG).
+  final Uint8List? still;
 
   @override
   Widget build(BuildContext context) {
@@ -49,6 +54,11 @@ class VideoView extends StatelessWidget {
                   )
                 else
                   const Center(child: CircularProgressIndicator()),
+                if (still != null && !playing)
+                  Container(
+                    color: Colors.black,
+                    child: Image.memory(still!, fit: BoxFit.contain, gaplessPlayback: true),
+                  ),
                 if (ready && !playing)
                   Center(
                     child: Container(

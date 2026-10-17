@@ -43,6 +43,10 @@ class MediaEngine(
 
     private val exportExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val probeExecutor: ExecutorService = Executors.newFixedThreadPool(2)
+    // 미리보기 화면 한 장. 손가락을 따라 빠르게 불리므로 별도 스레드에서 리트리버를 열어 둔 채 쓴다.
+    private val frameExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private var frameRetriever: MediaMetadataRetriever? = null
+    private var frameUri: Uri? = null
     private val main = Handler(Looper.getMainLooper())
     private val cancelled = AtomicBoolean(false)
 
@@ -55,6 +59,8 @@ class MediaEngine(
         cancelled.set(true)
         exportExecutor.shutdownNow()
         probeExecutor.shutdownNow()
+        frameExecutor.execute { frameRetriever?.release(); frameRetriever = null }
+        frameExecutor.shutdown()
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -63,6 +69,9 @@ class MediaEngine(
             "probe" -> background(probeExecutor, result) { probe(call.uri("uri")) }
             "thumbnails" -> background(probeExecutor, result) {
                 thumbnails(call.uri("uri"), call.long("count").toInt(), call.long("height").toInt())
+            }
+            "frameAt" -> background(frameExecutor, result) {
+                frameAt(call.uri("uri"), call.long("us"), call.long("height").toInt(), call.argument<Boolean>("exact") == true)
             }
             "trim" -> {
                 cancelled.set(false)
@@ -242,6 +251,22 @@ class MediaEngine(
         } finally {
             r.release()
         }
+    }
+
+    /** [us] 시점 화면 한 장(JPEG). [exact]가 아니면 가까운 키프레임이라 빠르다. */
+    private fun frameAt(uri: Uri, us: Long, height: Int, exact: Boolean): ByteArray? {
+        if (frameUri != uri) {
+            frameRetriever?.release()
+            frameRetriever = MediaMetadataRetriever().also { it.setDataSource(ctx, uri) }
+            frameUri = uri
+        }
+        val r = frameRetriever ?: return null
+        val option = if (exact) MediaMetadataRetriever.OPTION_CLOSEST else MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+        val bmp = r.getScaledFrameAtTime(us.coerceAtLeast(0L), option, height * 3, height) ?: return null
+        val bytes = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, 80, bytes)
+        bmp.recycle()
+        return bytes.toByteArray()
     }
 
     // ------------------------------------------------------------------ export

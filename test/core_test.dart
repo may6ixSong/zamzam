@@ -87,6 +87,30 @@ void main() {
     });
   });
 
+  group('whole-second range', () {
+    const dur = 204370000; // 03:24.37
+    test('rounds to the nearest second', () {
+      expect(snapToSecond(72400000, dur), 72000000);
+      expect(snapToSecond(72500000, dur), 73000000);
+      expect(snapToSecond(-3, dur), 0);
+    });
+    test('the very end stays the real end', () {
+      expect(snapToSecond(204000000, dur), dur);
+      expect(snapToSecond(203880000, dur), dur);
+      expect(snapToSecond(203800000, dur), 204000000);
+    });
+    test('start keeps one whole second before end', () {
+      expect(moveStartSec(const TrimRange(0, dur), 204000000, dur).startUs, 203000000);
+      expect(moveStartSec(const TrimRange(0, 10000000), 9600000, dur).startUs, 9000000);
+      expect(moveStartSec(const TrimRange(0, 10000000), 3300000, dur).startUs, 3000000);
+    });
+    test('end keeps one second after start', () {
+      expect(moveEndSec(const TrimRange(5000000, dur), 5200000, dur).endUs, 6000000);
+      expect(moveEndSec(const TrimRange(5000000, dur), 99000000000, dur).endUs, dur);
+      expect(moveEndSec(const TrimRange(5000000, dur), 130600000, dur).endUs, 131000000);
+    });
+  });
+
   group('keyframes', () {
     const kfs = [0, 2000000, 4000000, 6000000];
     test('snaps start back to the previous keyframe', () {
