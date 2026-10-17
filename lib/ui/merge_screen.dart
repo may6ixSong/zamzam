@@ -186,43 +186,47 @@ class _MergeScreenState extends State<MergeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('동영상 합치기'),
-        actions: [
-          if (_clips.isNotEmpty)
-            TextButton.icon(
-              onPressed: _adding ? null : _reset,
-              icon: const Icon(Icons.restart_alt_rounded, size: 18),
-              label: const Text('초기화'),
-              style: TextButton.styleFrom(foregroundColor: Palette.muted),
+    return ConfirmLeave(
+      enabled: _clips.isNotEmpty,
+      message: '불러온 동영상 목록이 사라져요.',
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('동영상 합치기'),
+          actions: [
+            if (_clips.isNotEmpty)
+              TextButton.icon(
+                onPressed: _adding ? null : _reset,
+                icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                label: const Text('초기화'),
+                style: TextButton.styleFrom(foregroundColor: Palette.muted),
+              ),
+            Padding(
+              padding: const EdgeInsets.only(right: 10),
+              child: FilledButton.icon(
+                onPressed: _adding ? null : _add,
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('추가'),
+                style: FilledButton.styleFrom(shape: const StadiumBorder(), foregroundColor: Colors.white),
+              ),
             ),
-          Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: FilledButton.icon(
-              onPressed: _adding ? null : _add,
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('추가'),
-              style: FilledButton.styleFrom(shape: const StadiumBorder(), foregroundColor: Colors.white),
-            ),
-          ),
-        ],
-        bottom: _adding
-            ? const PreferredSize(preferredSize: Size.fromHeight(3), child: LinearProgressIndicator(minHeight: 3))
-            : null,
-      ),
-      body: SafeArea(
-        top: false,
-        child: _clips.isEmpty
-            ? (_adding
-                  ? const Center(child: CircularProgressIndicator())
-                  : EmptyPrompt(
-                      icon: Icons.view_week_outlined,
-                      text: '이어 붙일 동영상을 2개 이상 골라주세요',
-                      button: '동영상 불러오기',
-                      onPressed: _add,
-                    ))
-            : LayoutBuilder(builder: (context, c) => isExpanded(c) ? _expanded() : _compact()),
+          ],
+          bottom: _adding
+              ? const PreferredSize(preferredSize: Size.fromHeight(3), child: LinearProgressIndicator(minHeight: 3))
+              : null,
+        ),
+        body: SafeArea(
+          top: false,
+          child: _clips.isEmpty
+              ? (_adding
+                    ? const Center(child: CircularProgressIndicator())
+                    : EmptyPrompt(
+                        icon: Icons.view_week_outlined,
+                        text: '이어 붙일 동영상을 2개 이상 골라주세요',
+                        button: '동영상 불러오기',
+                        onPressed: _add,
+                      ))
+              : LayoutBuilder(builder: (context, c) => isExpanded(c) ? _expanded() : _compact()),
+        ),
       ),
     );
   }

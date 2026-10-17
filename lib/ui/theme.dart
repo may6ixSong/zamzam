@@ -196,3 +196,34 @@ class TranscodeWarning extends StatelessWidget {
     ),
   );
 }
+
+/// 뒤로 가기(시스템 뒤로 가기·앱바 화살표 모두)를 누르면 확인을 받은 뒤 나간다. [enabled]가 아니면 바로 나간다.
+class ConfirmLeave extends StatelessWidget {
+  const ConfirmLeave({super.key, required this.enabled, required this.message, required this.child});
+
+  final bool enabled;
+  final String message;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !enabled,
+    onPopInvokedWithResult: (didPop, _) async {
+      if (didPop) return;
+      final navigator = Navigator.of(context);
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('이전 화면으로 갈까요?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+          content: Text(message, style: const TextStyle(height: 1.5)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('머무르기')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('나가기')),
+          ],
+        ),
+      );
+      if (ok == true) navigator.pop();
+    },
+    child: child,
+  );
+}

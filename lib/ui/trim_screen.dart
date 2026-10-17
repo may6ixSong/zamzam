@@ -309,31 +309,40 @@ class _TrimScreenState extends State<TrimScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('동영상 자르기'),
-        actions: [
-          if (_info != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 10),
-              child: ActionChip(
-                avatar: const Icon(Icons.swap_horiz_rounded, size: 18),
-                label: const Text('다른 영상'),
-                backgroundColor: Palette.s2,
-                side: BorderSide.none,
-                shape: const StadiumBorder(),
-                onPressed: _loading ? null : _pick,
+    return ConfirmLeave(
+      enabled: _info != null,
+      message: '편집 중인 구간 설정이 사라져요.',
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('동영상 자르기'),
+          actions: [
+            if (_info != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: ActionChip(
+                  avatar: const Icon(Icons.swap_horiz_rounded, size: 18),
+                  label: const Text('다른 영상'),
+                  backgroundColor: Palette.s2,
+                  side: BorderSide.none,
+                  shape: const StadiumBorder(),
+                  onPressed: _loading ? null : _pick,
+                ),
               ),
-            ),
-        ],
-      ),
-      body: SafeArea(
-        top: false,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _info == null
-            ? EmptyPrompt(icon: Icons.content_cut_rounded, text: '자를 동영상을 골라주세요', button: '동영상 불러오기', onPressed: _pick)
-            : LayoutBuilder(builder: (context, c) => isExpanded(c) ? _expanded() : _compact()),
+          ],
+        ),
+        body: SafeArea(
+          top: false,
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _info == null
+              ? EmptyPrompt(
+                  icon: Icons.content_cut_rounded,
+                  text: '자를 동영상을 골라주세요',
+                  button: '동영상 불러오기',
+                  onPressed: _pick,
+                )
+              : LayoutBuilder(builder: (context, c) => isExpanded(c) ? _expanded() : _compact()),
+        ),
       ),
     );
   }
