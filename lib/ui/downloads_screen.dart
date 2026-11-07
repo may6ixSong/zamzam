@@ -413,7 +413,8 @@ class _ItemTile extends StatefulWidget {
 }
 
 class _ItemTileState extends State<_ItemTile> {
-  static final _thumbCache = <String, Uint8List?>{};
+  /// 한 번 읽은 길이·썸네일은 다시 읽지 않는다(목록을 다시 열 때 바로 보이게).
+  static final _cache = <String, ({int durationUs, Uint8List? thumb})>{};
   Uint8List? _thumb;
   int? _durationUs;
   bool _missing = false;
@@ -426,21 +427,21 @@ class _ItemTileState extends State<_ItemTile> {
 
   Future<void> _loadInfo() async {
     final uri = widget.item.uri;
-    if (_thumbCache.containsKey(uri)) {
-      _thumb = _thumbCache[uri];
-    }
-    try {
-      final info = await MediaEngine.instance.probe(uri);
-      if (!mounted) return;
-      setState(() => _durationUs = info.durationUs);
-      if (_thumb == null) {
-        final t = await MediaEngine.instance.thumbnails(uri, count: 1, height: 160);
-        _thumbCache[uri] = t.isEmpty ? null : t.first;
-        if (mounted && t.isNotEmpty) setState(() => _thumb = t.first);
+    var info = _cache[uri];
+    if (info == null) {
+      try {
+        info = await MediaEngine.instance.listInfo(uri);
+        _cache[uri] = info;
+      } catch (_) {
+        if (mounted) setState(() => _missing = true);
+        return;
       }
-    } catch (_) {
-      if (mounted) setState(() => _missing = true);
     }
+    if (!mounted) return;
+    setState(() {
+      _durationUs = info!.durationUs > 0 ? info.durationUs : null;
+      _thumb = info.thumb;
+    });
   }
 
   @override

@@ -56,6 +56,8 @@ class MediaEngine(
 
     private val exportExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val probeExecutor: ExecutorService = Executors.newFixedThreadPool(2)
+    // 다운로드 목록의 길이·썸네일. 자르기·합치기의 영상 열기를 막지 않도록 따로 둔다.
+    private val listExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     // 미리보기 화면 한 장. 손가락을 따라 빠르게 불리므로 별도 스레드에서 리트리버를 열어 둔 채 쓴다.
     private val frameExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var frameRetriever: MediaMetadataRetriever? = null
@@ -74,6 +76,7 @@ class MediaEngine(
         downloadCancels.values.forEach { it.set(true) }
         downloadExecutor.shutdownNow()
         probeExecutor.shutdownNow()
+        listExecutor.shutdownNow()
         frameExecutor.execute { frameRetriever?.release(); frameRetriever = null }
         frameExecutor.shutdown()
     }
@@ -82,6 +85,7 @@ class MediaEngine(
         when (call.method) {
             "pickVideos" -> picker(call.argument<Boolean>("multiple") == true, result)
             "probe" -> background(probeExecutor, result) { probe(call.uri("uri")) }
+            "listInfo" -> background(listExecutor, result) { listInfo(call.uri("uri"), call.long("height").toInt()) }
             "thumbnails" -> background(probeExecutor, result) {
                 thumbnails(call.uri("uri"), call.long("count").toInt(), call.long("height").toInt())
             }
@@ -173,37 +177,15 @@ class MediaEngine(
             val t = tracksOf(ex)
             val vf = t.videoFormat
 
-            // 영상 샘플을 훑어 키프레임 위치, 프레임 수, 키프레임마다 쌓인 데이터량을 센다(데이터는 읽지 않는다).
-            ex.selectTrack(t.video)
-            val keyframes = ArrayList<Pair<Long, Long>>()
-            var frames = 0
-            var minPts = Long.MAX_VALUE
-            var maxPts = Long.MIN_VALUE
-            var videoBytes = 0L
-            while (true) {
-                if (ex.sampleTrackIndex < 0) break
-                val pts = ex.sampleTime
-                if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) keyframes.add(pts to videoBytes)
-                videoBytes += ex.sampleSize.coerceAtLeast(0L)
-                frames++
-                if (pts < minPts) minPts = pts
-                if (pts > maxPts) maxPts = pts
-                if (!ex.advance()) break
+            val scan = fastScan(uri, ex, t) ?: openExtractor(uri).let { fresh ->
+                try { slowScan(fresh, t) } finally { fresh.release() }
             }
-            keyframes.sortBy { it.first }
-
-            var audioBytes: Long? = null
-            if (t.audio >= 0) {
-                ex.unselectTrack(t.video)
-                ex.selectTrack(t.audio)
-                ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-                var sum = 0L
-                while (ex.sampleTrackIndex >= 0) {
-                    sum += ex.sampleSize.coerceAtLeast(0L)
-                    if (!ex.advance()) break
-                }
-                audioBytes = sum
-            }
+            val keyframes = scan.keyframes
+            val frames = scan.frames
+            val minPts = scan.minPts
+            val maxPts = scan.maxPts
+            val videoBytes = scan.videoBytes
+            val audioBytes = scan.audioBytes
 
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
             val durationUs = durationMs?.times(1000)
@@ -241,6 +223,82 @@ class MediaEngine(
             ex.release()
             retriever.release()
         }
+    }
+
+    private class Scan(
+        val keyframes: List<Pair<Long, Long>>,
+        val frames: Int,
+        val minPts: Long,
+        val maxPts: Long,
+        val videoBytes: Long,
+        val audioBytes: Long?,
+    )
+
+    /**
+     * MP4 목차만 읽어 키프레임 등을 구한다(파일 크기와 상관없이 빠르다).
+     * 시각은 MediaExtractor 의 첫 샘플에 맞추고, 키프레임 두 곳으로 탐색해 맞는지 확인한다.
+     * 목차가 없거나(조각난 MP4·WebM 등) 맞지 않으면 null → [slowScan].
+     */
+    private fun fastScan(uri: Uri, ex: MediaExtractor, t: Tracks): Scan? = runCatching {
+        val pfd = ctx.contentResolver.openFileDescriptor(uri, "r") ?: return null
+        val index = ParcelFileDescriptor.AutoCloseInputStream(pfd).channel.use { Mp4Index.read(it) } ?: return null
+        val v = index.video ?: return null
+        ex.selectTrack(t.video)
+        try {
+            if (ex.sampleTrackIndex < 0) return null
+            val shift = ex.sampleTime - v.firstPtsUs
+            val keyframes = v.keyframes().map { (it.first + shift) to it.second }
+            if (keyframes.isEmpty()) return null
+            for (k in listOf(keyframes[keyframes.size / 2], keyframes.last())) {
+                ex.seekTo(k.first, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                if (kotlin.math.abs(ex.sampleTime - k.first) > 1000) return null
+            }
+            Scan(
+                keyframes = keyframes,
+                frames = v.sampleCount,
+                minPts = v.ptsUs.min() + shift,
+                maxPts = v.ptsUs.max() + shift,
+                videoBytes = v.totalBytes,
+                audioBytes = if (t.audio >= 0) index.audio?.totalBytes else null,
+            )
+        } finally {
+            ex.unselectTrack(t.video)
+        }
+    }.getOrNull()
+
+    /** 샘플을 하나씩 넘기며 센다. 파일 전체를 읽으므로 큰 영상에서 느리다. */
+    private fun slowScan(ex: MediaExtractor, t: Tracks): Scan {
+        ex.selectTrack(t.video)
+        val keyframes = ArrayList<Pair<Long, Long>>()
+        var frames = 0
+        var minPts = Long.MAX_VALUE
+        var maxPts = Long.MIN_VALUE
+        var videoBytes = 0L
+        while (true) {
+            if (ex.sampleTrackIndex < 0) break
+            val pts = ex.sampleTime
+            if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) keyframes.add(pts to videoBytes)
+            videoBytes += ex.sampleSize.coerceAtLeast(0L)
+            frames++
+            if (pts < minPts) minPts = pts
+            if (pts > maxPts) maxPts = pts
+            if (!ex.advance()) break
+        }
+        keyframes.sortBy { it.first }
+
+        var audioBytes: Long? = null
+        if (t.audio >= 0) {
+            ex.unselectTrack(t.video)
+            ex.selectTrack(t.audio)
+            ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+            var sum = 0L
+            while (ex.sampleTrackIndex >= 0) {
+                sum += ex.sampleSize.coerceAtLeast(0L)
+                if (!ex.advance()) break
+            }
+            audioBytes = sum
+        }
+        return Scan(keyframes, frames, minPts, maxPts, videoBytes, audioBytes)
     }
 
     /** 코덱 설정 데이터(SPS/PPS 등)의 지문. 같아야 한 트랙으로 이어 붙여도 재생된다. */
@@ -292,6 +350,26 @@ class MediaEngine(
                 out.add(bytes.toByteArray())
             }
             return out
+        } finally {
+            r.release()
+        }
+    }
+
+    /** 목록용: 길이와 앞부분 화면 한 장. 파일을 훑지 않아 빠르다. */
+    private fun listInfo(uri: Uri, height: Int): Map<String, Any?> {
+        val r = MediaMetadataRetriever()
+        try {
+            r.setDataSource(ctx, uri)
+            val durationUs = (r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) * 1000
+            val t = (durationUs / 10).coerceAtMost(3_000_000L)
+            val bmp = r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, height * 3, height)
+            val thumb = bmp?.let {
+                val bytes = ByteArrayOutputStream()
+                it.compress(Bitmap.CompressFormat.JPEG, 75, bytes)
+                it.recycle()
+                bytes.toByteArray()
+            }
+            return mapOf("durationUs" to durationUs, "thumb" to thumb)
         } finally {
             r.release()
         }

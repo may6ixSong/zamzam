@@ -153,12 +153,14 @@ void startVideoDownload({required String url, required String name, required Str
   showToast(
     '다운로드를 시작했어요',
     action: SnackBarAction(label: '목록', onPressed: openDownloads),
+    duration: const Duration(seconds: 1),
   );
   Downloads.instance.start(url: url, name: name, pageUrl: pageUrl, userAgent: userAgent).then((item) {
     if (item != null) {
       showToast(
         '갤러리에 저장했어요 · ${formatBytes(item.sizeBytes)}',
         action: SnackBarAction(label: '목록', onPressed: openDownloads),
+        duration: const Duration(seconds: 1),
       );
     } else {
       final failed = Downloads.instance.tasks.where((t) => t.state == TaskState.failed && t.url == url);

@@ -79,16 +79,19 @@ class _TrimScreenState extends State<TrimScreen> {
 
   Future<void> _load(String uri) async {
     setState(() => _loading = true);
+    // 영상 정보 읽기와 재생기 준비를 동시에 해서 화면이 빨리 뜨게 한다.
+    final ctrl = createController(uri);
+    final ready = ctrl.initialize();
     try {
       final info = await _engine.probe(uri);
       if (!canTrim(info.durationUs)) {
+        ready.catchError((_) {}).whenComplete(ctrl.dispose);
         _toast('1초보다 짧은 영상은 자를 수 없어요');
         setState(() => _loading = false);
         return;
       }
       final old = _ctrl;
-      final ctrl = createController(info.uri);
-      await ctrl.initialize();
+      await ready;
       ctrl.addListener(_onTick);
       await old?.dispose();
       if (!mounted) {
@@ -107,6 +110,7 @@ class _TrimScreenState extends State<TrimScreen> {
       final thumbs = await _engine.thumbnails(info.uri, count: 12, height: 120);
       if (mounted && _info == info) setState(() => _thumbs = thumbs);
     } on PlatformException catch (e) {
+      ready.catchError((_) {}).whenComplete(ctrl.dispose);
       setState(() => _loading = false);
       _toast('영상을 열지 못했어요: ${e.message}');
     }

@@ -109,6 +109,12 @@ class MediaEngine {
     return VideoInfo.fromMap(m!);
   }
 
+  /// 목록용 길이와 썸네일 한 장. 자르기·합치기의 영상 열기와 따로 처리돼 서로 기다리지 않는다.
+  Future<({int durationUs, Uint8List? thumb})> listInfo(String uri, {int height = 160}) async {
+    final m = await _channel.invokeMapMethod<String, dynamic>('listInfo', {'uri': uri, 'height': height});
+    return (durationUs: (m?['durationUs'] as num?)?.toInt() ?? 0, thumb: m?['thumb'] as Uint8List?);
+  }
+
   /// 타임라인용 썸네일(JPEG) [count]장.
   Future<List<Uint8List>> thumbnails(String uri, {required int count, required int height}) async {
     final r = await _channel.invokeListMethod<Uint8List>('thumbnails', {'uri': uri, 'count': count, 'height': height});

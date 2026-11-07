@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 final navigatorKey = GlobalKey<NavigatorState>();
 final messengerKey = GlobalKey<ScaffoldMessengerState>();
 
-void showToast(String text, {SnackBarAction? action}) {
+/// 알림을 띄운다. 버튼이 있어도 [duration]이 지나면 닫힌다
+/// (Flutter 는 버튼이 있는 알림을 기본으로 계속 띄워 둔다).
+void showToast(String text, {SnackBarAction? action, Duration duration = const Duration(seconds: 3)}) {
   final m = messengerKey.currentState;
   if (m == null) return;
   m
     ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(content: Text(text), action: action));
+    ..showSnackBar(SnackBar(content: Text(text), action: action, duration: duration, persist: false));
 }
