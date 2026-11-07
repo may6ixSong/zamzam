@@ -55,6 +55,14 @@ class MenuScreen extends StatelessWidget {
                     height: 54,
                     child: Row(
                       children: [
+                        if (Navigator.canPop(context)) ...[
+                          IconButton(
+                            tooltip: '브라우저로',
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.arrow_back_rounded),
+                          ),
+                          const SizedBox(width: 2),
+                        ],
                         const _Logo(),
                         const SizedBox(width: 12),
                         const Text('ZamZam', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700)),

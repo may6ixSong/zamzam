@@ -23,6 +23,25 @@ class ExportResult {
 
 class ExportCancelled implements Exception {}
 
+typedef DownloadProgress = ({String id, int received, int total});
+
+class DownloadResult {
+  const DownloadResult({required this.uri, required this.name, required this.sizeBytes, required this.mime});
+
+  /// Android: content:// 주소, iOS: 앱 폴더에 남겨 둔 사본 경로(자르기·합치기에 쓴다).
+  final String uri;
+  final String name;
+  final int sizeBytes;
+  final String mime;
+
+  factory DownloadResult.fromMap(Map<dynamic, dynamic> m) => DownloadResult(
+    uri: m['uri'] as String,
+    name: m['name'] as String,
+    sizeBytes: (m['size'] as num).toInt(),
+    mime: m['mime'] as String? ?? 'video/mp4',
+  );
+}
+
 /// 네이티브(Android: MediaExtractor/MediaMuxer, iOS: AVFoundation passthrough) 호출 창구.
 /// 영상 데이터는 다시 인코딩하지 않고 그대로 복사한다.
 class MediaEngine {
@@ -30,6 +49,13 @@ class MediaEngine {
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'progress') {
         _progress.add((call.arguments as num).toDouble());
+      } else if (call.method == 'downloadProgress') {
+        final m = call.arguments as Map;
+        _downloadProgress.add((
+          id: m['id'] as String,
+          received: (m['received'] as num).toInt(),
+          total: (m['total'] as num).toInt(),
+        ));
       }
     });
   }
@@ -38,9 +64,39 @@ class MediaEngine {
 
   static const _channel = MethodChannel('zamzam/media');
   final _progress = StreamController<double>.broadcast();
+  final _downloadProgress = StreamController<DownloadProgress>.broadcast();
 
   /// 내보내기 진행률(0~1).
   Stream<double> get progress => _progress.stream;
+
+  /// 내려받기 진행(받은 바이트, 전체 바이트 — 모르면 -1).
+  Stream<DownloadProgress> get downloadProgress => _downloadProgress.stream;
+
+  /// [url]의 동영상을 내려받아 갤러리(Android Movies/ZamZam, iOS 사진 앱)에 바로 저장한다.
+  /// [name]은 확장자 없는 파일 이름. 쿠키는 네이티브가 브라우저 저장소에서 붙인다.
+  Future<DownloadResult> download({
+    required String id,
+    required String url,
+    required String name,
+    String? referer,
+    String? userAgent,
+  }) async {
+    try {
+      final m = await _channel.invokeMapMethod<String, dynamic>('download', {
+        'id': id,
+        'url': url,
+        'name': name,
+        'referer': referer,
+        'userAgent': userAgent,
+      });
+      return DownloadResult.fromMap(m!);
+    } on PlatformException catch (e) {
+      if (e.code == 'CANCELLED') throw ExportCancelled();
+      rethrow;
+    }
+  }
+
+  Future<void> cancelDownload(String id) => _channel.invokeMethod('cancelDownload', {'id': id});
 
   /// 갤러리에서 동영상을 고른다. 취소하면 빈 목록.
   Future<List<String>> pickVideos({required bool multiple}) async {
@@ -70,6 +126,14 @@ class MediaEngine {
   Future<ExportResult> merge(List<String> uris) => _export('merge', {'uris': uris});
 
   Future<void> cancel() => _channel.invokeMethod('cancel');
+
+  /// 웹 페이지의 파일 올리기(Android). 고른 파일의 content:// 주소들.
+  Future<List<String>> pickFiles(List<String> acceptTypes, {required bool multiple}) async =>
+      await _channel.invokeListMethod<String>('pickFiles', {'accept': acceptTypes, 'multiple': multiple}) ?? const [];
+
+  /// tel:, mailto:, intent: 같은 주소를 해당 앱으로 연다. 열 앱이 없으면 false.
+  Future<bool> openExternal(String url) async =>
+      await _channel.invokeMethod<bool>('openExternal', {'url': url}) ?? false;
 
   Future<void> openInGallery(String uri) => _channel.invokeMethod('open', {'uri': uri});
 

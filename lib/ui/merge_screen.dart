@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
+import '../core/downloads.dart';
 import '../core/media_engine.dart';
 import '../core/time_format.dart';
 import '../core/video_info.dart';
+import 'downloads_screen.dart';
 import 'export_flow.dart';
 import 'theme.dart';
 import 'video_view.dart';
@@ -18,7 +20,10 @@ class _Clip {
 }
 
 class MergeScreen extends StatefulWidget {
-  const MergeScreen({super.key});
+  const MergeScreen({super.key, this.initialUris});
+
+  /// 주면 갤러리 선택 없이 이 영상들을 이 순서로 불러온다(다운로드 목록에서 들어올 때).
+  final List<String>? initialUris;
 
   @override
   State<MergeScreen> createState() => _MergeScreenState();
@@ -37,7 +42,8 @@ class _MergeScreenState extends State<MergeScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _add());
+    final first = widget.initialUris;
+    WidgetsBinding.instance.addPostFrameCallback((_) => first != null && first.isNotEmpty ? _addUris(first) : _add());
   }
 
   @override
@@ -57,6 +63,39 @@ class _MergeScreenState extends State<MergeScreen> {
 
   Future<void> _add() async {
     List<String> uris;
+    if (Downloads.instance.items.isNotEmpty) {
+      final from = await showModalBottomSheet<String>(
+        context: context,
+        backgroundColor: Palette.s1,
+        showDragHandle: true,
+        builder: (c) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('갤러리에서 고르기'),
+                onTap: () => Navigator.pop(c, 'gallery'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.download_rounded, color: Palette.accent),
+                title: const Text('다운로드 목록에서 고르기'),
+                onTap: () => Navigator.pop(c, 'downloads'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (!mounted || from == null) return;
+      if (from == 'downloads') {
+        final picked = await Navigator.push<List<String>>(
+          context,
+          MaterialPageRoute(builder: (_) => const DownloadsScreen(pickMode: true)),
+        );
+        if (picked != null && picked.isNotEmpty && mounted) await _addUris(picked);
+        return;
+      }
+    }
     try {
       uris = await _engine.pickVideos(multiple: true);
     } on PlatformException catch (e) {
@@ -64,6 +103,10 @@ class _MergeScreenState extends State<MergeScreen> {
       return;
     }
     if (uris.isEmpty) return;
+    await _addUris(uris);
+  }
+
+  Future<void> _addUris(List<String> uris) async {
     setState(() => _adding = true);
     var failed = 0;
     for (final uri in uris) {

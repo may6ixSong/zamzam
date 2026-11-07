@@ -4,6 +4,7 @@ import Photos
 import PhotosUI
 import UIKit
 import UniformTypeIdentifiers
+import WebKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
@@ -41,6 +42,7 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
   private let frameQueue = DispatchQueue(label: "zamzam.frame")
   private var frameGenerator: AVAssetImageGenerator?
   private var framePath: String?
+  private var downloads: [String: VideoDownload] = [:]
 
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: "zamzam/media", binaryMessenger: messenger)
@@ -90,6 +92,20 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
       result(nil)
     case "saveLocation":
       result("사진 앱 · 최근 항목")
+    case "download":
+      startDownload(args, result)
+    case "cancelDownload":
+      if let id = args["id"] as? String { downloads[id]?.cancel() }
+      result(nil)
+    case "openExternal":
+      guard let text = args["url"] as? String, let url = URL(string: text) else {
+        result(false)
+        return
+      }
+      UIApplication.shared.open(url, options: [:]) { ok in result(ok) }
+    case "pickFiles":
+      // iOS 웹뷰는 파일 올리기를 스스로 처리한다.
+      result([String]())
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -427,6 +443,89 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
     }
   }
 
+  // MARK: - browser download
+
+  /// 웹 동영상을 받아 앱 폴더에 사본을 두고(자르기·합치기용) 사진 앱에도 저장한다.
+  private func startDownload(_ args: [String: Any], _ result: @escaping FlutterResult) {
+    guard let id = args["id"] as? String,
+      let text = args["url"] as? String,
+      let url = URL(string: text)
+    else {
+      result(FlutterError(code: "FAILED", message: "주소가 올바르지 않아요", details: nil))
+      return
+    }
+    let name = (args["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "video"
+    var request = URLRequest(url: url)
+    request.setValue("video/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+    if let ua = args["userAgent"] as? String, !ua.isEmpty { request.setValue(ua, forHTTPHeaderField: "User-Agent") }
+    if let referer = args["referer"] as? String, !referer.isEmpty {
+      request.setValue(referer, forHTTPHeaderField: "Referer")
+    }
+    // 브라우저(WKWebView)의 쿠키를 옮겨 로그인이 필요한 영상도 받게 한다.
+    WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+      for c in cookies { HTTPCookieStorage.shared.setCookie(c) }
+      let job = VideoDownload(
+        name: name,
+        onProgress: { [weak self] received, total in
+          DispatchQueue.main.async {
+            self?.channel.invokeMethod(
+              "downloadProgress", arguments: ["id": id, "received": received, "total": total] as [String: Any])
+          }
+        },
+        onDone: { [weak self] outcome in
+          DispatchQueue.main.async {
+            self?.downloads[id] = nil
+            switch outcome {
+            case .success(let (file, mime)):
+              self?.saveCopyToPhotos(file, mime: mime, result)
+            case .failure(let error):
+              if (error as NSError).code == NSURLErrorCancelled {
+                result(FlutterError(code: "CANCELLED", message: "취소했어요", details: nil))
+              } else {
+                result(FlutterError(code: "FAILED", message: error.localizedDescription, details: nil))
+              }
+            }
+          }
+        })
+      self.downloads[id] = job
+      job.start(request)
+    }
+  }
+
+  private func saveCopyToPhotos(_ file: URL, mime: String, _ result: @escaping FlutterResult) {
+    let size = fileSize(file)
+    let fail: (String) -> Void = { message in
+      try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+      result(FlutterError(code: "FAILED", message: message, details: nil))
+    }
+    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+      guard status == .authorized || status == .limited else {
+        DispatchQueue.main.async { fail("사진 앱에 저장할 권한이 없어요") }
+        return
+      }
+      PHPhotoLibrary.shared().performChanges({
+        let request = PHAssetCreationRequest.forAsset()
+        let options = PHAssetResourceCreationOptions()
+        options.originalFilename = file.lastPathComponent
+        options.shouldMoveFile = false
+        request.addResource(with: .video, fileURL: file, options: options)
+      }) { ok, error in
+        DispatchQueue.main.async {
+          if ok {
+            result([
+              "uri": file.path,
+              "name": file.lastPathComponent,
+              "size": size,
+              "mime": mime,
+            ] as [String: Any])
+          } else {
+            fail(error?.localizedDescription ?? "사진 앱이 이 형식을 저장하지 못했어요")
+          }
+        }
+      }
+    }
+  }
+
   // MARK: - helpers
 
   private func background(_ result: @escaping FlutterResult, _ work: @escaping () throws -> Any) {
@@ -461,5 +560,95 @@ final class MediaEngine: NSObject, PHPickerViewControllerDelegate {
       vc = presented
     }
     return vc
+  }
+}
+
+private struct DownloadError: LocalizedError {
+  let message: String
+  var errorDescription: String? { message }
+}
+
+/// 동영상 하나를 내려받는다. 끝나면 앱 폴더(Documents/downloads/<uuid>/)로 옮긴 파일을 돌려준다.
+final class VideoDownload: NSObject, URLSessionDownloadDelegate {
+  private let name: String
+  private let onProgress: (Int64, Int64) -> Void
+  private let onDone: (Result<(URL, String), Error>) -> Void
+  private var task: URLSessionDownloadTask?
+  private var lastReport = Date.distantPast
+  private var finished: Result<(URL, String), Error>?
+
+  private static let mimeExt: [String: String] = [
+    "video/mp4": "mp4", "video/x-m4v": "m4v", "video/quicktime": "mov",
+    "video/webm": "webm", "video/x-matroska": "mkv", "video/3gpp": "3gp",
+  ]
+
+  init(
+    name: String, onProgress: @escaping (Int64, Int64) -> Void,
+    onDone: @escaping (Result<(URL, String), Error>) -> Void
+  ) {
+    self.name = name
+    self.onProgress = onProgress
+    self.onDone = onDone
+  }
+
+  func start(_ request: URLRequest) {
+    let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+    let t = session.downloadTask(with: request)
+    task = t
+    t.resume()
+  }
+
+  func cancel() {
+    task?.cancel()
+  }
+
+  func urlSession(
+    _ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
+    totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64
+  ) {
+    let now = Date()
+    guard now.timeIntervalSince(lastReport) > 0.2 else { return }
+    lastReport = now
+    onProgress(totalBytesWritten, totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : -1)
+  }
+
+  func urlSession(
+    _ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL
+  ) {
+    // 이 함수가 끝나면 임시 파일이 지워지므로 여기서 옮긴다.
+    let status = (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 200
+    guard (200..<300).contains(status) else {
+      finished = .failure(DownloadError(message: "서버가 거부했어요 (HTTP \(status))"))
+      return
+    }
+    let mime = (downloadTask.response?.mimeType ?? "").lowercased()
+    if mime.hasPrefix("text/") || mime.contains("mpegurl") || mime.contains("json") || mime.contains("dash+xml") {
+      finished = .failure(DownloadError(message: "동영상 파일이 아니에요 (\(mime))"))
+      return
+    }
+    let urlExt = (downloadTask.originalRequest?.url?.pathExtension ?? "").lowercased()
+    let ext = Self.mimeExt[mime] ?? (Self.mimeExt.values.contains(urlExt) ? urlExt : "mp4")
+    let fm = FileManager.default
+    do {
+      let docs = try fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+      let dir = docs.appendingPathComponent("downloads", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+      try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+      let dest = dir.appendingPathComponent("\(name).\(ext)")
+      try fm.moveItem(at: location, to: dest)
+      let finalMime = Self.mimeExt[mime] != nil ? mime : "video/\(ext == "mov" ? "quicktime" : ext)"
+      finished = .success((dest, finalMime))
+    } catch {
+      finished = .failure(error)
+    }
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    session.finishTasksAndInvalidate()
+    if let error = error {
+      onDone(.failure(error))
+    } else {
+      onDone(finished ?? .failure(DownloadError(message: "받은 내용이 없어요")))
+    }
   }
 }

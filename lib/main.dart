@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import 'ui/menu_screen.dart';
+import 'browser/browser_screen.dart';
+import 'ui/app_keys.dart';
 import 'ui/theme.dart';
 
 void main() {
@@ -15,8 +16,10 @@ class ZamZamApp extends StatelessWidget {
     return MaterialApp(
       title: 'ZamZam',
       debugShowCheckedModeBanner: false,
+      navigatorKey: navigatorKey,
+      scaffoldMessengerKey: messengerKey,
       theme: buildTheme(),
-      home: const MenuScreen(),
+      home: const BrowserScreen(),
     );
   }
 }

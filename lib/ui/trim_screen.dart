@@ -15,7 +15,10 @@ import 'trim_timeline.dart';
 import 'video_view.dart';
 
 class TrimScreen extends StatefulWidget {
-  const TrimScreen({super.key});
+  const TrimScreen({super.key, this.initialUri});
+
+  /// 주면 갤러리 선택 없이 이 영상을 바로 연다(다운로드 목록에서 들어올 때).
+  final String? initialUri;
 
   @override
   State<TrimScreen> createState() => _TrimScreenState();
@@ -44,7 +47,8 @@ class _TrimScreenState extends State<TrimScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _pick());
+    final first = widget.initialUri;
+    WidgetsBinding.instance.addPostFrameCallback((_) => first != null ? _load(first) : _pick());
   }
 
   @override
@@ -70,9 +74,13 @@ class _TrimScreenState extends State<TrimScreen> {
       return;
     }
     if (uris.isEmpty) return;
+    await _load(uris.first);
+  }
+
+  Future<void> _load(String uri) async {
     setState(() => _loading = true);
     try {
-      final info = await _engine.probe(uris.first);
+      final info = await _engine.probe(uri);
       if (!canTrim(info.durationUs)) {
         _toast('1초보다 짧은 영상은 자를 수 없어요');
         setState(() => _loading = false);

@@ -16,15 +16,20 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.webkit.CookieManager
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.io.FileOutputStream
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -39,7 +44,12 @@ class MediaEngine(
     private val ctx: Context,
     private val channel: MethodChannel,
     private val picker: (multiple: Boolean, result: MethodChannel.Result) -> Unit,
+    private val filePicker: (accept: List<String>, multiple: Boolean, result: MethodChannel.Result) -> Unit,
 ) : MethodChannel.MethodCallHandler {
+
+    // 브라우저 동영상 내려받기. 여러 개를 동시에 받을 수 있다.
+    private val downloadExecutor: ExecutorService = Executors.newFixedThreadPool(3)
+    private val downloadCancels = ConcurrentHashMap<String, AtomicBoolean>()
 
     private val exportExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val probeExecutor: ExecutorService = Executors.newFixedThreadPool(2)
@@ -58,6 +68,8 @@ class MediaEngine(
         channel.setMethodCallHandler(null)
         cancelled.set(true)
         exportExecutor.shutdownNow()
+        downloadCancels.values.forEach { it.set(true) }
+        downloadExecutor.shutdownNow()
         probeExecutor.shutdownNow()
         frameExecutor.execute { frameRetriever?.release(); frameRetriever = null }
         frameExecutor.shutdown()
@@ -101,6 +113,34 @@ class MediaEngine(
                 }
             }
             "saveLocation" -> result.success("${Environment.DIRECTORY_MOVIES}/$FOLDER")
+            "download" -> {
+                val id = call.argument<String>("id")!!
+                val flag = AtomicBoolean(false)
+                downloadCancels[id] = flag
+                val url = call.argument<String>("url")!!
+                val name = call.argument<String>("name") ?: "video"
+                val referer = call.argument<String>("referer")
+                val userAgent = call.argument<String>("userAgent")
+                // 쿠키는 웹뷰 스레드(메인)에서 읽어 둔다.
+                val cookies = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+                background(downloadExecutor, result) {
+                    try {
+                        download(id, url, name, referer, userAgent, cookies, flag)
+                    } finally {
+                        downloadCancels.remove(id)
+                    }
+                }
+            }
+            "cancelDownload" -> {
+                downloadCancels[call.argument<String>("id")]?.set(true)
+                result.success(null)
+            }
+            "pickFiles" -> filePicker(
+                call.argument<List<String>>("accept") ?: emptyList(),
+                call.argument<Boolean>("multiple") == true,
+                result,
+            )
+            "openExternal" -> result.success(openExternal(call.argument<String>("url")!!))
             else -> result.notImplemented()
         }
     }
@@ -547,11 +587,13 @@ class MediaEngine(
     private class Output(val uri: Uri, val pfd: ParcelFileDescriptor, val name: String)
 
     /** 갤러리(Movies/ZamZam)에 '작성 중' 상태로 새 파일을 만든다. 완료 전에는 갤러리에 보이지 않는다. */
-    private fun createOutput(): Output {
-        val name = "ZamZam_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4"
+    private fun createOutput(
+        name: String = "ZamZam_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".mp4",
+        mime: String = "video/mp4",
+    ): Output {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
             put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/$FOLDER")
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
@@ -574,6 +616,144 @@ class MediaEngine(
         ctx.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
             if (c.moveToFirst()) c.getString(0) else null
         }
+
+    // ------------------------------------------------------------------ browser
+
+    /**
+     * 웹의 동영상 파일을 받아 갤러리(Movies/ZamZam)에 바로 쓴다.
+     * 브라우저와 같은 쿠키·User-Agent·Referer 를 붙여 로그인이 필요한 사이트도 받을 수 있게 한다.
+     */
+    private fun download(
+        id: String,
+        url: String,
+        baseName: String,
+        referer: String?,
+        userAgent: String?,
+        cookies: String?,
+        cancel: AtomicBoolean,
+    ): Map<String, Any?> {
+        var current = url
+        var redirects = 0
+        val conn: HttpURLConnection
+        while (true) {
+            val c = URL(current).openConnection() as HttpURLConnection
+            c.instanceFollowRedirects = false
+            c.connectTimeout = 20_000
+            c.readTimeout = 30_000
+            c.setRequestProperty("Accept", "video/*,*/*;q=0.8")
+            c.setRequestProperty("Accept-Encoding", "identity")
+            if (!userAgent.isNullOrEmpty()) c.setRequestProperty("User-Agent", userAgent)
+            if (!referer.isNullOrEmpty()) c.setRequestProperty("Referer", referer)
+            val cookie = if (current == url) cookies else runCatching { CookieManager.getInstance().getCookie(current) }.getOrNull()
+            if (!cookie.isNullOrEmpty()) c.setRequestProperty("Cookie", cookie)
+            val code = c.responseCode
+            if (code in 300..399) {
+                val location = c.getHeaderField("Location")
+                c.disconnect()
+                if (location == null || ++redirects > 8) throw IOException("주소가 너무 여러 번 바뀌어요")
+                current = URL(URL(current), location).toString()
+                continue
+            }
+            if (code !in 200..299) {
+                c.disconnect()
+                throw IOException("서버가 거부했어요 (HTTP $code)")
+            }
+            conn = c
+            break
+        }
+        try {
+            val type = conn.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US) ?: ""
+            if (type.startsWith("text/") || type.contains("mpegurl") || type.contains("dash+xml") || type.contains("json")) {
+                throw IOException("동영상 파일이 아니에요 ($type)")
+            }
+            val ext = extensionFor(type, current)
+            val mime = VIDEO_MIME[ext] ?: "video/mp4"
+            val total = conn.contentLengthLong
+            val out = createOutput("$baseName.$ext", mime)
+            try {
+                var received = 0L
+                var lastReport = 0L
+                conn.inputStream.use { input ->
+                    FileOutputStream(out.pfd.fileDescriptor).use { output ->
+                        val buf = ByteArray(256 * 1024)
+                        while (true) {
+                            if (cancel.get()) throw CancelledException()
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            output.write(buf, 0, n)
+                            received += n
+                            val now = System.currentTimeMillis()
+                            if (now - lastReport > 200) {
+                                lastReport = now
+                                reportDownload(id, received, total)
+                            }
+                        }
+                        output.flush()
+                    }
+                }
+                if (received == 0L) throw IOException("받은 내용이 없어요")
+                runCatching { out.pfd.close() }
+                val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+                ctx.contentResolver.update(out.uri, done, null, null)
+                reportDownload(id, received, received)
+                return mapOf(
+                    "uri" to out.uri.toString(),
+                    "name" to (displayName(out.uri) ?: out.name),
+                    "size" to received,
+                    "mime" to mime,
+                )
+            } catch (e: Throwable) {
+                discard(out)
+                throw e
+            }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun reportDownload(id: String, received: Long, total: Long) {
+        main.post {
+            channel.invokeMethod("downloadProgress", mapOf("id" to id, "received" to received, "total" to total))
+        }
+    }
+
+    private fun extensionFor(type: String, url: String): String {
+        MIME_EXT[type]?.let { return it }
+        val path = runCatching { URL(url).path.lowercase(Locale.US) }.getOrDefault("")
+        return VIDEO_MIME.keys.firstOrNull { path.endsWith(".$it") } ?: "mp4"
+    }
+
+    /** tel:, mailto:, intent:, 앱 전용 주소를 해당 앱으로 연다. */
+    private fun openExternal(url: String): Boolean {
+        val intent = try {
+            if (url.startsWith("intent:", ignoreCase = true)) {
+                Intent.parseUri(url, Intent.URI_INTENT_SCHEME).apply {
+                    // 웹 페이지가 앱 내부 화면을 직접 지정하지 못하게 한다.
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                    component = null
+                    selector = null
+                }
+            } else {
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            }
+        } catch (e: Exception) {
+            return false
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            ctx.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            // 앱이 없으면 플레이 스토어로 안내한다.
+            val pkg = intent.`package` ?: return false
+            runCatching {
+                ctx.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$pkg")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+                true
+            }.getOrDefault(false)
+        }
+    }
 
     // ------------------------------------------------------------------ helpers
 
@@ -600,5 +780,21 @@ class MediaEngine(
 
     companion object {
         private const val FOLDER = "ZamZam"
+        private val VIDEO_MIME = mapOf(
+            "mp4" to "video/mp4",
+            "m4v" to "video/x-m4v",
+            "mov" to "video/quicktime",
+            "webm" to "video/webm",
+            "mkv" to "video/x-matroska",
+            "3gp" to "video/3gpp",
+        )
+        private val MIME_EXT = mapOf(
+            "video/mp4" to "mp4",
+            "video/x-m4v" to "m4v",
+            "video/quicktime" to "mov",
+            "video/webm" to "webm",
+            "video/x-matroska" to "mkv",
+            "video/3gpp" to "3gp",
+        )
     }
 }
