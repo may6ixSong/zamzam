@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugins.webviewflutter.WebViewFlutterAndroidExternalApi
 
 class MainActivity : FlutterFragmentActivity() {
     private var pendingPick: MethodChannel.Result? = null
@@ -32,7 +33,10 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "zamzam/media")
-        engine = MediaEngine(applicationContext, channel, ::startPick, ::startFilePick)
+        engine = MediaEngine(applicationContext, channel, ::startPick, ::startFilePick) { id ->
+            @Suppress("DEPRECATION")
+            WebViewFlutterAndroidExternalApi.getWebView(flutterEngine, id)
+        }
     }
 
     override fun onDestroy() {

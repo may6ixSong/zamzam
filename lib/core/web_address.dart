@@ -62,8 +62,11 @@ enum VideoSourceKind {
   /// blob: — 사이트가 조각을 이어 재생하는 스트리밍이라 파일이 없다.
   stream,
 
-  /// .m3u8 / .mpd — 재생 목록 방식 스트리밍.
-  playlist,
+  /// .m3u8 — HLS 스트리밍. 조각을 받아 MP4 로 합칠 수 있다.
+  hls,
+
+  /// .mpd — DASH 스트리밍(지원하지 않음).
+  dash,
 
   /// 주소가 없거나 알 수 없는 형식.
   none,
@@ -76,8 +79,18 @@ VideoSourceKind classifyVideoSource(String src) {
   if (lower.startsWith('blob:') || lower.startsWith('mediasource:')) return VideoSourceKind.stream;
   if (!lower.startsWith('http://') && !lower.startsWith('https://')) return VideoSourceKind.none;
   final path = (Uri.tryParse(s)?.path ?? '').toLowerCase();
-  if (path.endsWith('.m3u8') || path.endsWith('.mpd')) return VideoSourceKind.playlist;
+  if (path.endsWith('.m3u8') || lower.contains('.m3u8?') || lower.contains('format=m3u8')) return VideoSourceKind.hls;
+  if (path.endsWith('.mpd')) return VideoSourceKind.dash;
   return VideoSourceKind.file;
+}
+
+/// 받을 수 있는 종류인지(파일 또는 HLS).
+bool isDownloadable(VideoSourceKind k) => k == VideoSourceKind.file || k == VideoSourceKind.hls;
+
+/// 페이지가 받아 간 주소 중 영상일 가능성이 높은지. 재생 목록이나 영상 확장자가 있어야 한다.
+bool isLikelyVideoResource(String url) {
+  final k = classifyVideoSource(url);
+  return k == VideoSourceKind.hls || (k == VideoSourceKind.file && looksLikeVideoFile(url));
 }
 
 const _videoExts = ['mp4', 'm4v', 'mov', 'webm', 'mkv', '3gp'];

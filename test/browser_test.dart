@@ -53,7 +53,10 @@ void main() {
       expect(classifyVideoSource('https://a.com/v.mp4'), VideoSourceKind.file);
       expect(classifyVideoSource('https://a.com/play?id=3'), VideoSourceKind.file);
       expect(classifyVideoSource('blob:https://a.com/1234'), VideoSourceKind.stream);
-      expect(classifyVideoSource('https://a.com/live/index.m3u8?t=1'), VideoSourceKind.playlist);
+      expect(classifyVideoSource('https://a.com/live/index.m3u8?t=1'), VideoSourceKind.hls);
+      expect(classifyVideoSource('https://a.com/v/manifest.mpd'), VideoSourceKind.dash);
+      expect(isDownloadable(VideoSourceKind.hls), isTrue);
+      expect(isDownloadable(VideoSourceKind.stream), isFalse);
       expect(classifyVideoSource(''), VideoSourceKind.none);
       expect(classifyVideoSource('data:video/mp4;base64,AAA'), VideoSourceKind.none);
     });
@@ -64,6 +67,25 @@ void main() {
       expect(downloadableSource(hit('blob:x', ['https://a.com/a.mp4'])), 'https://a.com/a.mp4');
       expect(downloadableSource(hit('https://a.com/b.webm', [])), 'https://a.com/b.webm');
       expect(downloadableSource(hit('blob:x', [])), isNull);
+    });
+
+    test('스트리밍이면 페이지가 받아 간 재생 목록을 쓴다', () {
+      VideoHit hit(List<String> c) => VideoHit(
+        src: 'blob:https://a.com/1',
+        sources: const [],
+        candidates: c,
+        poster: '',
+        durationSec: 0,
+        title: '',
+        page: '',
+        userAgent: '',
+      );
+      expect(
+        downloadableSource(hit(['https://a.com/x.mp4', 'https://cdn.a.com/v/master.m3u8?tok=1'])),
+        'https://cdn.a.com/v/master.m3u8?tok=1',
+      );
+      expect(downloadableSource(hit(['https://a.com/api/list', 'https://a.com/clip.mp4'])), 'https://a.com/clip.mp4');
+      expect(downloadableSource(hit(['https://a.com/api/list'])), isNull);
     });
 
     test('메시지 해석', () {

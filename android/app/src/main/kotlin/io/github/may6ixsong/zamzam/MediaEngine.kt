@@ -17,6 +17,8 @@ import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.webkit.CookieManager
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
@@ -45,6 +47,7 @@ class MediaEngine(
     private val channel: MethodChannel,
     private val picker: (multiple: Boolean, result: MethodChannel.Result) -> Unit,
     private val filePicker: (accept: List<String>, multiple: Boolean, result: MethodChannel.Result) -> Unit,
+    private val webViewOf: (id: Long) -> android.webkit.WebView?,
 ) : MethodChannel.MethodCallHandler {
 
     // 브라우저 동영상 내려받기. 여러 개를 동시에 받을 수 있다.
@@ -141,6 +144,7 @@ class MediaEngine(
                 result,
             )
             "openExternal" -> result.success(openExternal(call.argument<String>("url")!!))
+            "installPageScript" -> result.success(installPageScript(call.long("webView"), call.argument<String>("script")!!))
             else -> result.notImplemented()
         }
     }
@@ -632,6 +636,7 @@ class MediaEngine(
         cookies: String?,
         cancel: AtomicBoolean,
     ): Map<String, Any?> {
+        if (isPlaylistUrl(url)) return downloadHls(id, url, baseName, referer, userAgent, cancel)
         var current = url
         var redirects = 0
         val conn: HttpURLConnection
@@ -663,6 +668,10 @@ class MediaEngine(
         }
         try {
             val type = conn.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US) ?: ""
+            if (type.contains("mpegurl")) {
+                conn.disconnect()
+                return downloadHls(id, current, baseName, referer, userAgent, cancel)
+            }
             if (type.startsWith("text/") || type.contains("mpegurl") || type.contains("dash+xml") || type.contains("json")) {
                 throw IOException("동영상 파일이 아니에요 ($type)")
             }
@@ -711,6 +720,67 @@ class MediaEngine(
         }
     }
 
+    private fun isPlaylistUrl(url: String): Boolean {
+        val lower = url.lowercase(Locale.US)
+        val path = runCatching { URL(url).path.lowercase(Locale.US) }.getOrDefault("")
+        return path.endsWith(".m3u8") || lower.contains(".m3u8?") || lower.contains("format=m3u8")
+    }
+
+    /** HLS 스트리밍: 조각을 받아 MP4 하나로 합쳐 갤러리에 저장한다. */
+    private fun downloadHls(
+        id: String,
+        url: String,
+        baseName: String,
+        referer: String?,
+        userAgent: String?,
+        cancel: AtomicBoolean,
+    ): Map<String, Any?> {
+        val open: (String, LongRange?) -> HttpURLConnection = { u, range ->
+            (URL(u).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 20_000
+                readTimeout = 30_000
+                setRequestProperty("Accept-Encoding", "identity")
+                if (!userAgent.isNullOrEmpty()) setRequestProperty("User-Agent", userAgent)
+                if (!referer.isNullOrEmpty()) setRequestProperty("Referer", referer)
+                runCatching { CookieManager.getInstance().getCookie(u) }.getOrNull()
+                    ?.takeIf { it.isNotEmpty() }?.let { setRequestProperty("Cookie", it) }
+                if (range != null) setRequestProperty("Range", "bytes=${range.first}-${range.last}")
+            }
+        }
+        val hls = HlsDownloader(open, cancel) { received, total -> reportProgressThrottled(id, received, total) }
+        val out = createOutput("$baseName.mp4", "video/mp4")
+        try {
+            try {
+                hls.download(url, java.io.File(ctx.cacheDir, "hls/$id"), out.pfd.fileDescriptor)
+            } catch (e: HlsDownloader.CancelledByUser) {
+                throw CancelledException()
+            }
+            val size = out.pfd.statSize
+            runCatching { out.pfd.close() }
+            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            ctx.contentResolver.update(out.uri, done, null, null)
+            reportDownload(id, size, size)
+            return mapOf(
+                "uri" to out.uri.toString(),
+                "name" to (displayName(out.uri) ?: out.name),
+                "size" to size,
+                "mime" to "video/mp4",
+            )
+        } catch (e: Throwable) {
+            discard(out)
+            throw e
+        }
+    }
+
+    private val lastProgressAt = ConcurrentHashMap<String, Long>()
+
+    private fun reportProgressThrottled(id: String, received: Long, total: Long) {
+        val now = System.currentTimeMillis()
+        if (now - (lastProgressAt[id] ?: 0L) < 200) return
+        lastProgressAt[id] = now
+        reportDownload(id, received, total)
+    }
+
     private fun reportDownload(id: String, received: Long, total: Long) {
         main.post {
             channel.invokeMethod("downloadProgress", mapOf("id" to id, "received" to received, "total" to total))
@@ -721,6 +791,19 @@ class MediaEngine(
         MIME_EXT[type]?.let { return it }
         val path = runCatching { URL(url).path.lowercase(Locale.US) }.getOrDefault("")
         return VIDEO_MIME.keys.firstOrNull { path.endsWith(".$it") } ?: "mp4"
+    }
+
+    /**
+     * 모든 프레임(다른 사이트의 iframe 포함)에 페이지가 시작될 때 스크립트를 넣는다.
+     * 일반 사이트의 동영상 플레이어는 대부분 iframe 안에 있어서 바깥 페이지에만 넣으면 길게 누르기를 못 잡는다.
+     */
+    private fun installPageScript(id: Long, script: String): Boolean {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return false
+        val webView = webViewOf(id) ?: return false
+        return runCatching {
+            WebViewCompat.addDocumentStartJavaScript(webView, script, setOf("*"))
+            true
+        }.getOrDefault(false)
     }
 
     /** tel:, mailto:, intent:, 앱 전용 주소를 해당 앱으로 연다. */

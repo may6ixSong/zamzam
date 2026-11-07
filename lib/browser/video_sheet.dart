@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -9,14 +10,25 @@ import '../ui/downloads_screen.dart';
 import '../ui/theme.dart';
 import 'browser_tab.dart';
 
-/// 내려받을 수 있는 주소를 고른다. 재생 중인 주소가 스트리밍이면 `<source>` 중 파일 주소를 쓴다.
+/// 내려받을 주소를 고른다.
+///
+/// 1. 재생 중인 주소나 `<source>`가 파일·HLS 면 그것.
+/// 2. 스트리밍(blob:)이면 페이지가 받아 간 주소 중 HLS 재생 목록, 없으면 영상 파일.
 String? downloadableSource(VideoHit hit) {
-  if (classifyVideoSource(hit.src) == VideoSourceKind.file) return hit.src;
-  for (final s in hit.sources) {
-    if (classifyVideoSource(s) == VideoSourceKind.file) return s;
+  for (final s in [hit.src, ...hit.sources]) {
+    if (isDownloadable(classifyVideoSource(s))) return s;
+  }
+  for (final c in hit.candidates) {
+    if (classifyVideoSource(c) == VideoSourceKind.hls) return c;
+  }
+  for (final c in hit.candidates) {
+    if (isLikelyVideoResource(c)) return c;
   }
   return null;
 }
+
+/// iOS 는 아직 HLS 를 MP4 로 합치지 못한다.
+bool get _hlsSupported => defaultTargetPlatform == TargetPlatform.android;
 
 /// 동영상을 길게 눌렀을 때 뜨는 시트.
 Future<void> showVideoSheet(BuildContext context, BrowserTab tab, VideoHit hit) {
@@ -37,9 +49,12 @@ class _VideoSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final src = downloadableSource(hit);
-    final kind = src != null ? VideoSourceKind.file : classifyVideoSource(hit.src);
-    final name = suggestFileName(src: src ?? hit.src, title: hit.title);
+    final found = downloadableSource(hit);
+    final srcKind = found == null ? null : classifyVideoSource(found);
+    final src = srcKind == VideoSourceKind.hls && !_hlsSupported ? null : found;
+    final kind = src != null ? srcKind! : (srcKind ?? classifyVideoSource(hit.src));
+    final isHls = src != null && kind == VideoSourceKind.hls;
+    final name = suggestFileName(src: src ?? hit.src, title: hit.title.isNotEmpty ? hit.title : tab.title);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
@@ -69,6 +84,7 @@ class _VideoSheet extends StatelessWidget {
                       const SizedBox(height: 3),
                       Text(
                         [
+                          if (isHls) '스트리밍 → MP4',
                           if (hit.durationSec > 0) formatTime((hit.durationSec * 1e6).round()),
                           hostOf(src ?? hit.page),
                         ].join(' · '),
@@ -107,9 +123,10 @@ class _VideoSheet extends StatelessWidget {
                 decoration: BoxDecoration(color: Palette.s2, borderRadius: BorderRadius.circular(12)),
                 child: Text(switch (kind) {
                   VideoSourceKind.stream =>
-                    '이 사이트는 영상을 작은 조각으로 나눠 스트리밍해서 내려받을 파일이 없어요. '
-                        '(유튜브·넷플릭스 같은 대형 사이트가 대부분 이 방식이에요)',
-                  VideoSourceKind.playlist => '재생 목록(HLS/DASH) 방식의 스트리밍이라 지금은 내려받을 수 없어요.',
+                    '스트리밍 주소를 아직 찾지 못했어요. 영상을 몇 초 재생한 뒤 다시 길게 눌러 보세요. '
+                        '(유튜브처럼 영상·음성을 따로 암호화해 보내는 사이트는 받을 수 없어요)',
+                  VideoSourceKind.hls => 'iOS 에서는 아직 스트리밍(HLS) 영상을 받을 수 없어요.',
+                  VideoSourceKind.dash => 'DASH 방식 스트리밍이라 지금은 내려받을 수 없어요.',
                   _ => '동영상 주소를 찾지 못했어요. 한 번 재생한 뒤 다시 길게 눌러 보세요.',
                 }, style: const TextStyle(fontSize: 13.5, height: 1.5, color: Palette.muted)),
               ),
@@ -195,7 +212,7 @@ Future<void> showPageVideos(BuildContext context, BrowserTab tab) async {
               const Padding(
                 padding: EdgeInsets.fromLTRB(20, 0, 20, 20),
                 child: Text(
-                  '영상을 한 번 재생한 뒤 다시 찾아보세요. 다른 사이트의 영상을 끼워 넣은 경우(iframe)에는 찾을 수 없어요.',
+                  '영상을 몇 초 재생한 뒤 다시 찾아보거나, 영상 위를 길게 눌러 보세요.',
                   style: TextStyle(fontSize: 13.5, height: 1.5, color: Palette.muted),
                 ),
               ),
@@ -207,7 +224,7 @@ Future<void> showPageVideos(BuildContext context, BrowserTab tab) async {
                     Builder(
                       builder: (_) {
                         final kind = classifyVideoSource(v.src);
-                        final ok = kind == VideoSourceKind.file;
+                        final ok = isDownloadable(kind) && (kind != VideoSourceKind.hls || _hlsSupported);
                         return ListTile(
                           leading: Icon(
                             ok ? Icons.movie_outlined : Icons.block_rounded,
@@ -220,7 +237,7 @@ Future<void> showPageVideos(BuildContext context, BrowserTab tab) async {
                             style: const TextStyle(fontSize: 13.5),
                           ),
                           subtitle: Text(
-                            ok ? '눌러서 다운로드' : '내려받을 수 없는 방식',
+                            ok ? (kind == VideoSourceKind.hls ? '스트리밍 · 눌러서 MP4 로 다운로드' : '눌러서 다운로드') : '내려받을 수 없는 방식',
                             style: const TextStyle(fontSize: 12, color: Palette.muted),
                           ),
                           enabled: ok,

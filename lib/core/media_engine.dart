@@ -135,6 +135,10 @@ class MediaEngine {
   Future<bool> openExternal(String url) async =>
       await _channel.invokeMethod<bool>('openExternal', {'url': url}) ?? false;
 
+  /// Android: 웹뷰의 모든 프레임에 페이지 시작 스크립트를 넣는다. 지원하지 않으면 false.
+  Future<bool> installPageScript(int webViewId, String script) async =>
+      await _channel.invokeMethod<bool>('installPageScript', {'webView': webViewId, 'script': script}) ?? false;
+
   Future<void> openInGallery(String uri) => _channel.invokeMethod('open', {'uri': uri});
 
   /// 저장 위치 안내 문구.

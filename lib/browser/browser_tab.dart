@@ -5,6 +5,8 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
+import '../core/media_engine.dart';
+
 import '../core/browser_data.dart';
 import 'page_scripts.dart';
 
@@ -13,6 +15,7 @@ class VideoHit {
   const VideoHit({
     required this.src,
     required this.sources,
+    this.candidates = const [],
     required this.poster,
     required this.durationSec,
     required this.title,
@@ -22,6 +25,9 @@ class VideoHit {
 
   final String src;
   final List<String> sources;
+
+  /// 페이지가 네트워크로 받아 간 영상 주소들(최근 것이 앞). 스트리밍일 때 이걸로 받는다.
+  final List<String> candidates;
   final String poster;
   final double durationSec;
   final String title;
@@ -35,6 +41,7 @@ class VideoHit {
       return VideoHit(
         src: j['src'] as String? ?? '',
         sources: (j['sources'] as List? ?? const []).whereType<String>().toList(),
+        candidates: (j['candidates'] as List? ?? const []).whereType<String>().toList(),
         poster: j['poster'] as String? ?? '',
         durationSec: (j['duration'] as num?)?.toDouble() ?? 0,
         title: j['title'] as String? ?? '',
@@ -149,6 +156,8 @@ class BrowserTab extends ChangeNotifier {
         ..setOnShowFileSelector(
           (params) => host.pickFiles(params.acceptTypes, params.mode == FileSelectorMode.openMultiple),
         );
+      // iframe 안의 플레이어까지 잡도록 모든 프레임에 페이지 시작 시 넣는다.
+      MediaEngine.instance.installPageScript(p.webViewIdentifier, longPressScript).catchError((_) => false);
       c.enableZoom(true);
     } else if (p is WebKitWebViewController) {
       p.setAllowsBackForwardNavigationGestures(true);
