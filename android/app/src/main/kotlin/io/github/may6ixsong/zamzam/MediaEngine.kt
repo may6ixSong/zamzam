@@ -126,17 +126,28 @@ class MediaEngine(
                 downloadCancels[id] = flag
                 val url = call.argument<String>("url")!!
                 val name = call.argument<String>("name") ?: "video"
-                val referer = call.argument<String>("referer")
-                val userAgent = call.argument<String>("userAgent")
-                // 쿠키는 웹뷰 스레드(메인)에서 읽어 둔다.
-                val cookies = runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+                val auth = webAuth(call, url)
+                val variantUrl = call.argument<String>("variantUrl")
+                val maxShortSide = call.argument<Number>("maxShortSide")?.toInt()
                 background(downloadExecutor, result) {
                     try {
-                        download(id, url, name, referer, userAgent, cookies, flag)
+                        download(id, url, name, auth, variantUrl, maxShortSide, flag)
                     } finally {
                         downloadCancels.remove(id)
+                        lastProgressAt.remove(id)
                     }
                 }
+            }
+            "inspectVideo" -> {
+                val url = call.argument<String>("url")!!
+                val auth = webAuth(call, url)
+                background(probeExecutor, result) { inspectVideo(url, auth) }
+            }
+            "compress" -> {
+                cancelled.set(false)
+                val uri = call.uri("uri")
+                val shortSide = call.long("shortSide").toInt()
+                background(exportExecutor, result) { compress(uri, shortSide) }
             }
             "cancelDownload" -> {
                 downloadCancels[call.argument<String>("id")]?.set(true)
@@ -701,34 +712,30 @@ class MediaEngine(
 
     // ------------------------------------------------------------------ browser
 
-    /**
-     * 웹의 동영상 파일을 받아 갤러리(Movies/ZamZam)에 바로 쓴다.
-     * 브라우저와 같은 쿠키·User-Agent·Referer 를 붙여 로그인이 필요한 사이트도 받을 수 있게 한다.
-     */
-    private fun download(
-        id: String,
-        url: String,
-        baseName: String,
-        referer: String?,
-        userAgent: String?,
-        cookies: String?,
-        cancel: AtomicBoolean,
-    ): Map<String, Any?> {
-        if (isPlaylistUrl(url)) return downloadHls(id, url, baseName, referer, userAgent, cancel)
+    /** 브라우저와 같은 쿠키·User-Agent·Referer 를 붙인 요청. 로그인이 필요한 사이트도 받을 수 있게 한다. */
+    private class WebAuth(val referer: String?, val userAgent: String?, val firstUrl: String, val firstCookies: String?)
+
+    private fun connect(url: String, auth: WebAuth, range: LongRange? = null, follow: Boolean = true): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = follow
+            connectTimeout = 20_000
+            readTimeout = 30_000
+            setRequestProperty("Accept", "video/*,*/*;q=0.8")
+            setRequestProperty("Accept-Encoding", "identity")
+            if (!auth.userAgent.isNullOrEmpty()) setRequestProperty("User-Agent", auth.userAgent)
+            if (!auth.referer.isNullOrEmpty()) setRequestProperty("Referer", auth.referer)
+            val cookie = if (url == auth.firstUrl) auth.firstCookies
+            else runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull()
+            if (!cookie.isNullOrEmpty()) setRequestProperty("Cookie", cookie)
+            if (range != null) setRequestProperty("Range", "bytes=${range.first}-${range.last}")
+        }
+
+    /** 주소를 따라가(최대 8번) 응답을 연다. 2xx 가 아니면 예외. */
+    private fun openFollowing(url: String, auth: WebAuth, range: LongRange? = null): Pair<HttpURLConnection, String> {
         var current = url
         var redirects = 0
-        val conn: HttpURLConnection
         while (true) {
-            val c = URL(current).openConnection() as HttpURLConnection
-            c.instanceFollowRedirects = false
-            c.connectTimeout = 20_000
-            c.readTimeout = 30_000
-            c.setRequestProperty("Accept", "video/*,*/*;q=0.8")
-            c.setRequestProperty("Accept-Encoding", "identity")
-            if (!userAgent.isNullOrEmpty()) c.setRequestProperty("User-Agent", userAgent)
-            if (!referer.isNullOrEmpty()) c.setRequestProperty("Referer", referer)
-            val cookie = if (current == url) cookies else runCatching { CookieManager.getInstance().getCookie(current) }.getOrNull()
-            if (!cookie.isNullOrEmpty()) c.setRequestProperty("Cookie", cookie)
+            val c = connect(current, auth, range, follow = false)
             val code = c.responseCode
             if (code in 300..399) {
                 val location = c.getHeaderField("Location")
@@ -741,60 +748,202 @@ class MediaEngine(
                 c.disconnect()
                 throw IOException("서버가 거부했어요 (HTTP $code)")
             }
-            conn = c
-            break
+            return c to current
         }
+    }
+
+    private fun contentTypeOf(c: HttpURLConnection) =
+        c.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US) ?: ""
+
+    /**
+     * 받기 전에 화질 목록과 용량을 알아본다.
+     * HLS 면 화질별 해상도·대역폭과 길이, 파일이면 전체 크기.
+     */
+    private fun inspectVideo(url: String, auth: WebAuth): Map<String, Any?> {
+        if (isPlaylistUrl(url)) return inspectHls(url, auth)
+        val (c, finalUrl) = openFollowing(url, auth, 0L..0L)
         try {
-            val type = conn.contentType?.substringBefore(';')?.trim()?.lowercase(Locale.US) ?: ""
-            if (type.contains("mpegurl")) {
-                conn.disconnect()
-                return downloadHls(id, current, baseName, referer, userAgent, cancel)
-            }
-            if (type.startsWith("text/") || type.contains("mpegurl") || type.contains("dash+xml") || type.contains("json")) {
-                throw IOException("동영상 파일이 아니에요 ($type)")
-            }
-            val ext = extensionFor(type, current)
-            val mime = VIDEO_MIME[ext] ?: "video/mp4"
-            val total = conn.contentLengthLong
-            val out = createOutput("$baseName.$ext", mime)
-            try {
-                var received = 0L
-                var lastReport = 0L
-                conn.inputStream.use { input ->
-                    FileOutputStream(out.pfd.fileDescriptor).use { output ->
-                        val buf = ByteArray(256 * 1024)
-                        while (true) {
-                            if (cancel.get()) throw CancelledException()
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            output.write(buf, 0, n)
-                            received += n
-                            val now = System.currentTimeMillis()
-                            if (now - lastReport > 200) {
-                                lastReport = now
-                                reportDownload(id, received, total)
-                            }
-                        }
-                        output.flush()
+            val type = contentTypeOf(c)
+            if (type.contains("mpegurl")) return inspectHls(finalUrl, auth)
+            // "bytes 0-0/12345" 의 전체 크기, 범위를 무시하면 Content-Length.
+            val total = c.getHeaderField("Content-Range")?.substringAfter('/')?.toLongOrNull()
+                ?: c.contentLengthLong.takeIf { c.responseCode == 200 && it > 0 }
+            return mapOf("kind" to "file", "sizeBytes" to total, "mime" to type)
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    private fun inspectHls(url: String, auth: WebAuth): Map<String, Any?> {
+        val info = HlsDownloader({ u, r -> connect(u, auth, r) }, AtomicBoolean(false)) { _, _ -> }.inspect(url)
+        return mapOf(
+            "kind" to "hls",
+            "durationSec" to info.durationSec,
+            "variants" to info.variants.map {
+                mapOf("url" to it.url, "width" to it.width, "height" to it.height, "bandwidth" to it.bandwidth)
+            },
+        )
+    }
+
+    /**
+     * 웹 동영상을 받아 갤러리(Movies/ZamZam)에 저장한다.
+     * - HLS 면 [variantUrl] 화질(없으면 최고 화질)을 받아 MP4 로 합친다.
+     * - [maxShortSide]를 주면 받은 뒤 그 해상도로 낮춰 다시 압축한다(원본은 남기지 않는다).
+     */
+    private fun download(
+        id: String,
+        url: String,
+        baseName: String,
+        auth: WebAuth,
+        variantUrl: String?,
+        maxShortSide: Int?,
+        cancel: AtomicBoolean,
+    ): Map<String, Any?> {
+        val work = java.io.File(ctx.cacheDir, "dl/$id").apply { mkdirs() }
+        try {
+            if (maxShortSide == null) {
+                // 바로 갤러리 파일에 쓴다(임시 파일 없이).
+                return if (isPlaylistUrl(url)) {
+                    toGallery("$baseName.mp4", "video/mp4") { fd -> fetchHls(id, url, auth, variantUrl, work, fd, cancel) }
+                } else {
+                    val (c, finalUrl) = openFollowing(url, auth)
+                    if (contentTypeOf(c).contains("mpegurl")) {
+                        c.disconnect()
+                        toGallery("$baseName.mp4", "video/mp4") { fd -> fetchHls(id, finalUrl, auth, variantUrl, work, fd, cancel) }
+                    } else {
+                        val (ext, mime) = fileTypeOf(c, finalUrl)
+                        toGallery("$baseName.$ext", mime) { fd -> copyBody(id, c, FileOutputStream(fd), cancel) }
                     }
                 }
-                if (received == 0L) throw IOException("받은 내용이 없어요")
-                runCatching { out.pfd.close() }
-                val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-                ctx.contentResolver.update(out.uri, done, null, null)
-                reportDownload(id, received, received)
-                return mapOf(
-                    "uri" to out.uri.toString(),
-                    "name" to (displayName(out.uri) ?: out.name),
-                    "size" to received,
-                    "mime" to mime,
-                )
-            } catch (e: Throwable) {
-                discard(out)
-                throw e
+            }
+            // 화질 낮추기: 임시 파일로 받은 뒤 변환해서 갤러리로.
+            val src = java.io.File(work, "source")
+            if (isPlaylistUrl(url)) {
+                FileOutputStream(src).use { fetchHls(id, url, auth, variantUrl, java.io.File(work, "hls"), it.fd, cancel) }
+            } else {
+                val (c, finalUrl) = openFollowing(url, auth)
+                if (contentTypeOf(c).contains("mpegurl")) {
+                    c.disconnect()
+                    FileOutputStream(src).use { fetchHls(id, finalUrl, auth, variantUrl, java.io.File(work, "hls"), it.fd, cancel) }
+                } else {
+                    fileTypeOf(c, finalUrl)
+                    FileOutputStream(src).use { copyBody(id, c, it, cancel) }
+                }
+            }
+            val converted = java.io.File(work, "converted.mp4")
+            val plan = Transcoder.planFor(src, maxShortSide)
+            val final = if (plan == null) src else {
+                Transcoder(ctx, main).run(Uri.fromFile(src), converted, plan, cancel) { pct ->
+                    reportDownload(id, pct.toLong(), 100L, phase = "convert")
+                }
+                converted
+            }
+            return toGallery("$baseName.mp4", "video/mp4") { fd ->
+                java.io.FileInputStream(final).use { input -> FileOutputStream(fd).use { input.copyTo(it, 256 * 1024) } }
+            }
+        } catch (e: HlsDownloader.CancelledByUser) {
+            throw CancelledException()
+        } catch (e: Transcoder.Cancelled) {
+            throw CancelledException()
+        } finally {
+            work.deleteRecursively()
+        }
+    }
+
+    /** 영상 파일이 맞는지 보고 (확장자, MIME)을 정한다. 웹 페이지 등이면 예외. */
+    private fun fileTypeOf(c: HttpURLConnection, url: String): Pair<String, String> {
+        val type = contentTypeOf(c)
+        if (type.startsWith("text/") || type.contains("dash+xml") || type.contains("json")) {
+            c.disconnect()
+            throw IOException("동영상 파일이 아니에요 ($type)")
+        }
+        val ext = extensionFor(type, url)
+        return ext to (VIDEO_MIME[ext] ?: "video/mp4")
+    }
+
+    private fun copyBody(id: String, c: HttpURLConnection, output: java.io.OutputStream, cancel: AtomicBoolean) {
+        val total = c.contentLengthLong
+        var received = 0L
+        try {
+            c.inputStream.use { input ->
+                output.use { os ->
+                    val buf = ByteArray(256 * 1024)
+                    while (true) {
+                        if (cancel.get()) throw CancelledException()
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        os.write(buf, 0, n)
+                        received += n
+                        reportProgressThrottled(id, received, total)
+                    }
+                    os.flush()
+                }
             }
         } finally {
-            conn.disconnect()
+            c.disconnect()
+        }
+        if (received == 0L) throw IOException("받은 내용이 없어요")
+    }
+
+    private fun fetchHls(
+        id: String,
+        url: String,
+        auth: WebAuth,
+        variantUrl: String?,
+        work: java.io.File,
+        fd: java.io.FileDescriptor,
+        cancel: AtomicBoolean,
+    ) {
+        val hls = HlsDownloader({ u, r -> connect(u, auth, r) }, cancel) { received, total ->
+            reportProgressThrottled(id, received, total)
+        }
+        hls.download(url, work, fd, variantUrl)
+    }
+
+    /** 갤러리에 '작성 중' 파일을 만들어 [write]로 채우고 공개한다. 실패하면 지운다. */
+    private fun toGallery(name: String, mime: String, write: (java.io.FileDescriptor) -> Unit): Map<String, Any?> {
+        val out = createOutput(name, mime)
+        try {
+            write(out.pfd.fileDescriptor)
+            runCatching { out.pfd.close() }
+            // 쓰는 쪽이 스트림을 닫으며 파일 핸들도 닫으므로 다시 열어 크기를 잰다.
+            val size = ctx.contentResolver.openFileDescriptor(out.uri, "r")?.use { it.statSize } ?: 0L
+            if (size <= 0L) throw IOException("받은 내용이 없어요")
+            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            ctx.contentResolver.update(out.uri, done, null, null)
+            return mapOf(
+                "uri" to out.uri.toString(),
+                "name" to (displayName(out.uri) ?: out.name),
+                "size" to size,
+                "mime" to mime,
+            )
+        } catch (e: Throwable) {
+            discard(out)
+            throw e
+        }
+    }
+
+    /** 갤러리의 영상을 [shortSide] 해상도로 낮춰 새 파일로 저장한다(자르기·합치기처럼 진행률을 보낸다). */
+    private fun compress(uri: Uri, shortSide: Int): Map<String, Any?> {
+        val work = java.io.File(ctx.cacheDir, "compress").apply { deleteRecursively(); mkdirs() }
+        try {
+            val plan = Transcoder.planFor(ctx, uri, shortSide)
+                ?: throw IOException("이미 그 해상도보다 작은 영상이에요")
+            val out = java.io.File(work, "out.mp4")
+            try {
+                Transcoder(ctx, main).run(uri, out, plan, cancelled) { pct ->
+                    main.post { channel.invokeMethod("progress", pct / 100.0) }
+                }
+            } catch (e: Transcoder.Cancelled) {
+                throw CancelledException()
+            }
+            val base = (displayName(uri)?.substringBeforeLast('.') ?: "ZamZam") + "_${shortSide}p"
+            val r = toGallery("$base.mp4", "video/mp4") { fd ->
+                java.io.FileInputStream(out).use { input -> FileOutputStream(fd).use { input.copyTo(it, 256 * 1024) } }
+            }
+            return r + ("durationUs" to durationOf(Uri.parse(r["uri"] as String)))
+        } finally {
+            work.deleteRecursively()
         }
     }
 
@@ -802,52 +951,6 @@ class MediaEngine(
         val lower = url.lowercase(Locale.US)
         val path = runCatching { URL(url).path.lowercase(Locale.US) }.getOrDefault("")
         return path.endsWith(".m3u8") || lower.contains(".m3u8?") || lower.contains("format=m3u8")
-    }
-
-    /** HLS 스트리밍: 조각을 받아 MP4 하나로 합쳐 갤러리에 저장한다. */
-    private fun downloadHls(
-        id: String,
-        url: String,
-        baseName: String,
-        referer: String?,
-        userAgent: String?,
-        cancel: AtomicBoolean,
-    ): Map<String, Any?> {
-        val open: (String, LongRange?) -> HttpURLConnection = { u, range ->
-            (URL(u).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 20_000
-                readTimeout = 30_000
-                setRequestProperty("Accept-Encoding", "identity")
-                if (!userAgent.isNullOrEmpty()) setRequestProperty("User-Agent", userAgent)
-                if (!referer.isNullOrEmpty()) setRequestProperty("Referer", referer)
-                runCatching { CookieManager.getInstance().getCookie(u) }.getOrNull()
-                    ?.takeIf { it.isNotEmpty() }?.let { setRequestProperty("Cookie", it) }
-                if (range != null) setRequestProperty("Range", "bytes=${range.first}-${range.last}")
-            }
-        }
-        val hls = HlsDownloader(open, cancel) { received, total -> reportProgressThrottled(id, received, total) }
-        val out = createOutput("$baseName.mp4", "video/mp4")
-        try {
-            try {
-                hls.download(url, java.io.File(ctx.cacheDir, "hls/$id"), out.pfd.fileDescriptor)
-            } catch (e: HlsDownloader.CancelledByUser) {
-                throw CancelledException()
-            }
-            val size = out.pfd.statSize
-            runCatching { out.pfd.close() }
-            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            ctx.contentResolver.update(out.uri, done, null, null)
-            reportDownload(id, size, size)
-            return mapOf(
-                "uri" to out.uri.toString(),
-                "name" to (displayName(out.uri) ?: out.name),
-                "size" to size,
-                "mime" to "video/mp4",
-            )
-        } catch (e: Throwable) {
-            discard(out)
-            throw e
-        }
     }
 
     private val lastProgressAt = ConcurrentHashMap<String, Long>()
@@ -859,9 +962,12 @@ class MediaEngine(
         reportDownload(id, received, total)
     }
 
-    private fun reportDownload(id: String, received: Long, total: Long) {
+    private fun reportDownload(id: String, received: Long, total: Long, phase: String = "download") {
         main.post {
-            channel.invokeMethod("downloadProgress", mapOf("id" to id, "received" to received, "total" to total))
+            channel.invokeMethod(
+                "downloadProgress",
+                mapOf("id" to id, "received" to received, "total" to total, "phase" to phase),
+            )
         }
     }
 
@@ -932,6 +1038,14 @@ class MediaEngine(
             }
         }
     }
+
+    /** 쿠키는 웹뷰 스레드(메인)에서 읽어 둔다. */
+    private fun webAuth(call: MethodCall, url: String) = WebAuth(
+        call.argument<String>("referer"),
+        call.argument<String>("userAgent"),
+        url,
+        runCatching { CookieManager.getInstance().getCookie(url) }.getOrNull(),
+    )
 
     private fun MethodCall.uri(key: String): Uri = Uri.parse(argument<String>(key)!!)
 

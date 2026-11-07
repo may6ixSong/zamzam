@@ -40,11 +40,31 @@ class HlsDownloader(
 
     private val keys = HashMap<String, ByteArray>()
 
-    /** [playlistUrl]을 받아 [out]에 MP4 로 쓴다. 임시 파일은 [workDir]에 만들고 지운다. */
-    fun download(playlistUrl: String, workDir: File, out: FileDescriptor) {
+    /** 대표 재생 목록의 화질 하나. */
+    class Variant(val url: String, val width: Int, val height: Int, val bandwidth: Long, val audioGroup: String?)
+
+    /** 화질 목록(높은 화질 먼저)과 영상 길이(초). 화질이 하나뿐인 목록이면 빈 목록. */
+    class Info(val variants: List<Variant>, val durationSec: Double)
+
+    fun inspect(playlistUrl: String): Info {
+        val body = text(playlistUrl)
+        if (!body.trimStart().startsWith("#EXTM3U")) throw IOException("재생 목록(m3u8)이 아니에요")
+        val variants = if (body.contains("#EXT-X-STREAM-INF")) parseVariants(playlistUrl, body).variants else emptyList()
+        val mediaUrl = variants.firstOrNull()?.url ?: playlistUrl
+        val media = if (mediaUrl == playlistUrl) body else text(mediaUrl)
+        val duration = media.lines().filter { it.startsWith("#EXTINF:") }
+            .sumOf { it.substringAfter(':').substringBefore(',').trim().toDoubleOrNull() ?: 0.0 }
+        return Info(variants, duration)
+    }
+
+    /**
+     * [playlistUrl]을 받아 [out]에 MP4 로 쓴다. 임시 파일은 [workDir]에 만들고 지운다.
+     * [variantUrl]을 주면 그 화질을, 아니면 가장 좋은 화질을 받는다.
+     */
+    fun download(playlistUrl: String, workDir: File, out: FileDescriptor, variantUrl: String? = null) {
         workDir.mkdirs()
         try {
-            val (videoUrl, audioUrl) = pickStreams(playlistUrl)
+            val (videoUrl, audioUrl) = pickStreams(playlistUrl, variantUrl)
             val video = parseMedia(videoUrl)
             val audio = audioUrl?.let { parseMedia(it) }
             val totalSegs = video.segs.size + (audio?.segs?.size ?: 0)
@@ -70,14 +90,11 @@ class HlsDownloader(
         }
     }
 
-    /** 대표 재생 목록이면 가장 좋은 화질과 그에 맞는 음성 목록을 고른다. */
-    private fun pickStreams(url: String): Pair<String, String?> {
-        val body = text(url)
-        if (!body.trimStart().startsWith("#EXTM3U")) throw IOException("재생 목록(m3u8)이 아니에요")
-        if (!body.contains("#EXT-X-STREAM-INF")) return url to null
+    private class Master(val variants: List<Variant>, val audios: List<Map<String, String>>)
+
+    private fun parseVariants(url: String, body: String): Master {
         val lines = body.lines().map { it.trim() }
-        var best: Pair<Long, String>? = null
-        var bestAudioGroup: String? = null
+        val variants = mutableListOf<Variant>()
         val audios = mutableListOf<Map<String, String>>()
         for ((i, line) in lines.withIndex()) {
             if (line.startsWith("#EXT-X-MEDIA:")) {
@@ -87,22 +104,39 @@ class HlsDownloader(
             if (!line.startsWith("#EXT-X-STREAM-INF:")) continue
             val a = attrs(line.substringAfter(':'))
             val uri = lines.drop(i + 1).firstOrNull { it.isNotEmpty() && !it.startsWith("#") } ?: continue
-            val res = a["RESOLUTION"]?.split('x')?.mapNotNull { it.toLongOrNull() }
-            val pixels = if (res != null && res.size == 2) res[0] * res[1] else 0L
-            val score = pixels * 1_000_000_000L + (a["BANDWIDTH"]?.toLongOrNull() ?: 0L)
-            if (best == null || score > best.first) {
-                best = score to resolve(url, uri)
-                bestAudioGroup = a["AUDIO"]
-            }
+            val res = a["RESOLUTION"]?.split('x')?.mapNotNull { it.toIntOrNull() }
+            // 평균 대역폭이 있으면 그걸로(용량 예상이 더 정확하다).
+            val bw = a["AVERAGE-BANDWIDTH"]?.toLongOrNull() ?: a["BANDWIDTH"]?.toLongOrNull() ?: 0L
+            variants += Variant(
+                resolve(url, uri),
+                res?.getOrNull(0) ?: 0,
+                res?.getOrNull(1) ?: 0,
+                bw,
+                a["AUDIO"],
+            )
         }
-        val variant = best?.second ?: throw IOException("재생할 수 있는 화질을 찾지 못했어요")
-        val audio = bestAudioGroup?.let { group ->
-            val inGroup = audios.filter { it["GROUP-ID"] == group }
+        // 같은 화질이 여러 번(예: 코덱별) 있으면 하나만 남기고, 높은 화질 먼저.
+        val sorted = variants
+            .sortedWith(compareByDescending<Variant> { it.width.toLong() * it.height }.thenByDescending { it.bandwidth })
+            .distinctBy { if (it.height > 0) "${it.width}x${it.height}" else it.url }
+        return Master(sorted, audios)
+    }
+
+    /** 고른 화질(없으면 가장 좋은 화질)과 그에 맞는 음성 목록. */
+    private fun pickStreams(url: String, variantUrl: String? = null): Pair<String, String?> {
+        val body = text(url)
+        if (!body.trimStart().startsWith("#EXTM3U")) throw IOException("재생 목록(m3u8)이 아니에요")
+        if (!body.contains("#EXT-X-STREAM-INF")) return url to null
+        val master = parseVariants(url, body)
+        val chosen = master.variants.firstOrNull { it.url == variantUrl } ?: master.variants.firstOrNull()
+            ?: throw IOException("재생할 수 있는 화질을 찾지 못했어요")
+        val audio = chosen.audioGroup?.let { group ->
+            val inGroup = master.audios.filter { it["GROUP-ID"] == group }
             (inGroup.firstOrNull { it["DEFAULT"] == "YES" } ?: inGroup.firstOrNull())?.get("URI")?.let { resolve(url, it) }
         }
         // 대표 목록 안에 또 대표 목록이 있는 경우.
-        val nested = text(variant)
-        return if (nested.contains("#EXT-X-STREAM-INF")) pickStreams(variant).first to audio else variant to audio
+        val nested = text(chosen.url)
+        return if (nested.contains("#EXT-X-STREAM-INF")) pickStreams(chosen.url).first to audio else chosen.url to audio
     }
 
     private fun parseMedia(url: String): Media {

@@ -10,6 +10,7 @@ Future<bool> runExport(
   BuildContext context, {
   required String title,
   required Future<ExportResult> Function() job,
+  String detail = '원본 데이터를 그대로 복사하는 중',
 }) async {
   final engine = MediaEngine.instance;
   final navigator = Navigator.of(context);
@@ -19,7 +20,7 @@ Future<bool> runExport(
     barrierDismissible: false,
     builder: (_) => PopScope(
       canPop: false,
-      child: _ProgressDialog(title: title, progress: engine.progress),
+      child: _ProgressDialog(title: title, detail: detail, progress: engine.progress),
     ),
   );
   ExportResult? result;
@@ -50,9 +51,10 @@ Future<bool> runExport(
 }
 
 class _ProgressDialog extends StatelessWidget {
-  const _ProgressDialog({required this.title, required this.progress});
+  const _ProgressDialog({required this.title, required this.detail, required this.progress});
 
   final String title;
+  final String detail;
   final Stream<double> progress;
 
   @override
@@ -74,10 +76,7 @@ class _ProgressDialog extends StatelessWidget {
               backgroundColor: Palette.s3,
             ),
             const SizedBox(height: 10),
-            Text(
-              '${(v * 100).round()}% · 원본 데이터를 그대로 복사하는 중',
-              style: const TextStyle(fontSize: 12.5, color: Palette.muted),
-            ),
+            Text('${(v * 100).round()}% · $detail', style: const TextStyle(fontSize: 12.5, color: Palette.muted)),
           ],
         );
       },

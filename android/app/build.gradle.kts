@@ -66,4 +66,8 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     // 모든 프레임에 페이지 시작 스크립트 넣기(동영상 길게 누르기)
     implementation("androidx.webkit:webkit:1.15.0")
+    // 화질 낮추기(재인코딩)
+    implementation("androidx.media3:media3-transformer:1.8.0")
+    implementation("androidx.media3:media3-effect:1.8.0")
+    implementation("androidx.media3:media3-common:1.8.0")
 }

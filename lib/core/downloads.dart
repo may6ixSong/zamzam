@@ -63,13 +63,26 @@ enum TaskState { running, failed, cancelled }
 
 /// 진행 중이거나 실패한 내려받기.
 class DownloadTask {
-  DownloadTask({required this.id, required this.url, required this.name, required this.pageUrl, this.userAgent});
+  DownloadTask({
+    required this.id,
+    required this.url,
+    required this.name,
+    required this.pageUrl,
+    this.userAgent,
+    this.variantUrl,
+    this.maxShortSide,
+  });
 
   final String id;
   final String url;
   final String name;
   final String pageUrl;
   final String? userAgent;
+  final String? variantUrl;
+  final int? maxShortSide;
+
+  /// 화질 낮추기 중(받기는 끝남). 이때 received/total 은 퍼센트.
+  bool converting = false;
   int received = 0;
   int total = -1;
   TaskState state = TaskState.running;
@@ -116,11 +129,21 @@ class Downloads extends ChangeNotifier {
     required String name,
     required String pageUrl,
     String? userAgent,
+    String? variantUrl,
+    int? maxShortSide,
   }) async {
     await load();
     _sub ??= _engine.downloadProgress.listen(_onProgress);
     final id = '${DateTime.now().microsecondsSinceEpoch}-${_seq++}';
-    final task = DownloadTask(id: id, url: url, name: name, pageUrl: pageUrl, userAgent: userAgent);
+    final task = DownloadTask(
+      id: id,
+      url: url,
+      name: name,
+      pageUrl: pageUrl,
+      userAgent: userAgent,
+      variantUrl: variantUrl,
+      maxShortSide: maxShortSide,
+    );
     _tasks.insert(0, task);
     notifyListeners();
     try {
@@ -130,6 +153,8 @@ class Downloads extends ChangeNotifier {
         name: name,
         referer: pageUrl.isEmpty ? null : pageUrl,
         userAgent: userAgent,
+        variantUrl: variantUrl,
+        maxShortSide: maxShortSide,
       );
       _tasks.remove(task);
       final item = DownloadItem(
@@ -179,7 +204,14 @@ class Downloads extends ChangeNotifier {
 
   Future<DownloadItem?> retry(DownloadTask task) {
     _tasks.remove(task);
-    return start(url: task.url, name: task.name, pageUrl: task.pageUrl, userAgent: task.userAgent);
+    return start(
+      url: task.url,
+      name: task.name,
+      pageUrl: task.pageUrl,
+      userAgent: task.userAgent,
+      variantUrl: task.variantUrl,
+      maxShortSide: task.maxShortSide,
+    );
   }
 
   /// 목록에서만 지운다. 갤러리에 저장된 영상은 그대로 둔다.
@@ -205,7 +237,8 @@ class Downloads extends ChangeNotifier {
       if (t.id == p.id) {
         t
           ..received = p.received
-          ..total = p.total;
+          ..total = p.total
+          ..converting = p.converting;
         notifyListeners();
         return;
       }

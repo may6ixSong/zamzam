@@ -18,6 +18,8 @@ class VideoHit {
     this.candidates = const [],
     required this.poster,
     required this.durationSec,
+    this.width = 0,
+    this.height = 0,
     required this.title,
     required this.page,
     required this.userAgent,
@@ -30,6 +32,10 @@ class VideoHit {
   final List<String> candidates;
   final String poster;
   final double durationSec;
+
+  /// 재생 중인 영상의 원본 해상도(모르면 0).
+  final int width;
+  final int height;
   final String title;
   final String page;
   final String userAgent;
@@ -44,6 +50,8 @@ class VideoHit {
         candidates: (j['candidates'] as List? ?? const []).whereType<String>().toList(),
         poster: j['poster'] as String? ?? '',
         durationSec: (j['duration'] as num?)?.toDouble() ?? 0,
+        width: (j['width'] as num?)?.toInt() ?? 0,
+        height: (j['height'] as num?)?.toInt() ?? 0,
         title: j['title'] as String? ?? '',
         page: j['page'] as String? ?? '',
         userAgent: j['ua'] as String? ?? '',

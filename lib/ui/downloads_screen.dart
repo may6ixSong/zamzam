@@ -1,10 +1,16 @@
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/downloads.dart';
 import '../core/media_engine.dart';
+import '../core/quality.dart';
 import '../core/time_format.dart';
+import '../core/video_info.dart';
 import '../core/web_address.dart';
+import 'export_flow.dart';
 import 'merge_screen.dart';
 import 'theme.dart';
 import 'trim_screen.dart';
@@ -113,6 +119,13 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
               subtitle: const Text('이 영상부터 이어 붙일 영상을 골라요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
               onTap: () => Navigator.pop(c, 'merge'),
             ),
+            if (defaultTargetPlatform == TargetPlatform.android)
+              ListTile(
+                leading: const Icon(Icons.compress_rounded, color: Palette.ok),
+                title: const Text('용량 줄이기'),
+                subtitle: const Text('해상도를 낮춰 새 파일로 저장해요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+                onTap: () => Navigator.pop(c, 'compress'),
+              ),
             ListTile(
               leading: const Icon(Icons.play_circle_outline_rounded),
               title: const Text('갤러리에서 보기'),
@@ -152,6 +165,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             ..add(item.id);
         });
         _toast('이어 붙일 영상을 순서대로 눌러 주세요');
+      case 'compress':
+        await _compress(item);
       case 'open':
         MediaEngine.instance.openInGallery(item.uri).catchError((_) => _toast('열 수 있는 앱이 없어요'));
       case 'copy':
@@ -161,6 +176,88 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         await _downloads.remove(item);
         _selected.remove(item.id);
     }
+  }
+
+  /// 해상도를 골라 다시 압축하고, 새 파일을 목록에 넣는다(원본은 그대로).
+  Future<void> _compress(DownloadItem item) async {
+    final engine = MediaEngine.instance;
+    VideoInfo info;
+    try {
+      info = await engine.probe(item.uri);
+    } catch (e) {
+      _toast('영상을 열지 못했어요');
+      return;
+    }
+    final srcShort = math.min(info.width, info.height);
+    final dur = info.durationUs / 1e6;
+    final options = qualityOptions(
+      VideoInspection(isHls: false, sizeBytes: item.sizeBytes, durationSec: dur),
+      width: info.width,
+      height: info.height,
+    ).where((o) => o.reencode).toList();
+    if (!mounted) return;
+    if (options.isEmpty) {
+      _toast('이미 ${srcShort}p 라 더 줄일 해상도가 없어요');
+      return;
+    }
+    final picked = await showModalBottomSheet<QualityOption>(
+      context: context,
+      backgroundColor: Palette.s1,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+              child: Text(
+                '용량 줄이기 · 지금 ${srcShort}p ${formatBytes(item.sizeBytes)}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                '새 파일로 저장하고 원본은 그대로 둬요. 영상 길이만큼 시간이 걸릴 수 있어요.',
+                style: TextStyle(fontSize: 12.5, color: Palette.muted),
+              ),
+            ),
+            for (final o in options)
+              ListTile(
+                leading: const Icon(Icons.hd_outlined),
+                title: Text(o.label),
+                trailing: Text(
+                  o.sizeBytes == null ? '' : '약 ${formatBytes(o.sizeBytes!)}',
+                  style: const TextStyle(color: Palette.muted, fontFeatures: tabular),
+                ),
+                onTap: () => Navigator.pop(c, o),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    ExportResult? made;
+    await runExport(
+      context,
+      title: '${picked.label} 로 줄이는 중',
+      detail: '해상도를 낮춰 다시 압축하는 중',
+      job: () async => made = await engine.compress(item.uri, shortSide: picked.maxShortSide!),
+    );
+    final r = made;
+    if (r == null) return;
+    _downloads.add(
+      DownloadItem(
+        id: '${DateTime.now().microsecondsSinceEpoch}-c',
+        uri: r.uri,
+        name: r.name,
+        sizeBytes: r.sizeBytes,
+        sourceUrl: item.sourceUrl,
+        pageUrl: item.pageUrl,
+        time: DateTime.now(),
+      ),
+    );
   }
 
   void _toast(String msg) {
@@ -363,7 +460,9 @@ class _TaskTile extends StatelessWidget {
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      task.total > 0
+                      task.converting
+                          ? '${task.maxShortSide}p 로 변환 중 · ${task.received}%'
+                          : task.total > 0
                           ? '${formatBytes(task.received)} / ${formatBytes(task.total)} · ${((f ?? 0) * 100).round()}%'
                           : '${formatBytes(task.received)} 받는 중',
                       style: const TextStyle(fontSize: 12, color: Palette.muted, fontFeatures: tabular),

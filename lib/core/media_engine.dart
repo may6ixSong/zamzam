@@ -23,7 +23,8 @@ class ExportResult {
 
 class ExportCancelled implements Exception {}
 
-typedef DownloadProgress = ({String id, int received, int total});
+/// [converting]이면 화질 낮추기 중이고 received/total 은 퍼센트(0~100).
+typedef DownloadProgress = ({String id, int received, int total, bool converting});
 
 class DownloadResult {
   const DownloadResult({required this.uri, required this.name, required this.sizeBytes, required this.mime});
@@ -55,6 +56,7 @@ class MediaEngine {
           id: m['id'] as String,
           received: (m['received'] as num).toInt(),
           total: (m['total'] as num).toInt(),
+          converting: m['phase'] == 'convert',
         ));
       }
     });
@@ -80,6 +82,8 @@ class MediaEngine {
     required String name,
     String? referer,
     String? userAgent,
+    String? variantUrl,
+    int? maxShortSide,
   }) async {
     try {
       final m = await _channel.invokeMapMethod<String, dynamic>('download', {
@@ -88,6 +92,8 @@ class MediaEngine {
         'name': name,
         'referer': referer,
         'userAgent': userAgent,
+        'variantUrl': variantUrl,
+        'maxShortSide': maxShortSide,
       });
       return DownloadResult.fromMap(m!);
     } on PlatformException catch (e) {
@@ -95,6 +101,19 @@ class MediaEngine {
       rethrow;
     }
   }
+
+  /// 받기 전에 화질 목록·용량을 알아본다(Android). 결과는 [VideoInspection.fromMap]으로 읽는다.
+  Future<Map<dynamic, dynamic>> inspectVideo(String url, {String? referer, String? userAgent}) async =>
+      await _channel.invokeMapMethod<dynamic, dynamic>('inspectVideo', {
+        'url': url,
+        'referer': referer,
+        'userAgent': userAgent,
+      }) ??
+      const {};
+
+  /// 갤러리의 영상을 짧은 변 [shortSide] 해상도로 낮춰 새 파일로 저장한다(Android, 진행률은 [progress]).
+  Future<ExportResult> compress(String uri, {required int shortSide}) =>
+      _export('compress', {'uri': uri, 'shortSide': shortSide});
 
   Future<void> cancelDownload(String id) => _channel.invokeMethod('cancelDownload', {'id': id});
 
