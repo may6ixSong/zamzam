@@ -16,7 +16,9 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "io.github.may6ixsong.zamzam"
+        // 브라우저 버전은 이전 편집 전용 버전(io.github.may6ixsong.zamzam)과 다른 앱으로 설치되어
+        // 한 폰에 둘 다 둘 수 있다.
+        applicationId = "io.github.may6ixsong.zamzam.browser"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // Android 10+: MediaStore 저장(RELATIVE_PATH/IS_PENDING)에 저장소 권한이 필요 없다.

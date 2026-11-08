@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:usesCleartextTraffic="true"
-        android:label="ZamZam"
+        android:label="ZamZam 브라우저"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

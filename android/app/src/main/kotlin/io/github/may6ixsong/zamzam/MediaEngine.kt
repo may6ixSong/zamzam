@@ -188,21 +188,37 @@ class MediaEngine(
             val t = tracksOf(ex)
             val vf = t.videoFormat
 
-            val durationHint = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull()?.times(1000) ?: 0L
-            val scan = fastScan(uri, ex, t) ?: openExtractor(uri).let { fresh ->
-                try {
-                    hopScan(fresh, t, durationHint, nameAndSize(uri).second, retriever)
-                } finally {
-                    fresh.release()
-                }
+            // 영상 샘플을 훑어 키프레임 위치, 프레임 수, 키프레임마다 쌓인 데이터량을 센다(데이터는 읽지 않는다).
+            ex.selectTrack(t.video)
+            val keyframes = ArrayList<Pair<Long, Long>>()
+            var frames = 0
+            var minPts = Long.MAX_VALUE
+            var maxPts = Long.MIN_VALUE
+            var videoBytes = 0L
+            while (true) {
+                if (ex.sampleTrackIndex < 0) break
+                val pts = ex.sampleTime
+                if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) keyframes.add(pts to videoBytes)
+                videoBytes += ex.sampleSize.coerceAtLeast(0L)
+                frames++
+                if (pts < minPts) minPts = pts
+                if (pts > maxPts) maxPts = pts
+                if (!ex.advance()) break
             }
-            val keyframes = scan.keyframes
-            val frames = scan.frames
-            val minPts = scan.minPts
-            val maxPts = scan.maxPts
-            val videoBytes = scan.videoBytes
-            val audioBytes = scan.audioBytes
+            keyframes.sortBy { it.first }
+
+            var audioBytes: Long? = null
+            if (t.audio >= 0) {
+                ex.unselectTrack(t.video)
+                ex.selectTrack(t.audio)
+                ex.seekTo(0, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                var sum = 0L
+                while (ex.sampleTrackIndex >= 0) {
+                    sum += ex.sampleSize.coerceAtLeast(0L)
+                    if (!ex.advance()) break
+                }
+                audioBytes = sum
+            }
 
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
             val durationUs = durationMs?.times(1000)
@@ -240,90 +256,6 @@ class MediaEngine(
             ex.release()
             retriever.release()
         }
-    }
-
-    private class Scan(
-        val keyframes: List<Pair<Long, Long>>,
-        val frames: Int,
-        val minPts: Long,
-        val maxPts: Long,
-        val videoBytes: Long,
-        val audioBytes: Long?,
-    )
-
-    /**
-     * MP4 목차만 읽어 키프레임 등을 구한다(파일 크기와 상관없이 빠르다).
-     * 시각은 MediaExtractor 의 첫 샘플에 맞추고, 키프레임 두 곳으로 탐색해 맞는지 확인한다.
-     * 목차가 없거나(조각난 MP4·WebM 등) 맞지 않으면 null → [hopScan].
-     */
-    private fun fastScan(uri: Uri, ex: MediaExtractor, t: Tracks): Scan? = runCatching {
-        val pfd = ctx.contentResolver.openFileDescriptor(uri, "r") ?: return null
-        val index = ParcelFileDescriptor.AutoCloseInputStream(pfd).channel.use { Mp4Index.read(it) } ?: return null
-        val v = index.video ?: return null
-        ex.selectTrack(t.video)
-        try {
-            if (ex.sampleTrackIndex < 0) return null
-            val shift = ex.sampleTime - v.firstPtsUs
-            val keyframes = v.keyframes().map { (it.first + shift) to it.second }
-            if (keyframes.isEmpty()) return null
-            for (k in listOf(keyframes[keyframes.size / 2], keyframes.last())) {
-                ex.seekTo(k.first, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
-                if (kotlin.math.abs(ex.sampleTime - k.first) > 1000) return null
-            }
-            Scan(
-                keyframes = keyframes,
-                frames = v.sampleCount,
-                minPts = v.ptsUs.min() + shift,
-                maxPts = v.ptsUs.max() + shift,
-                videoBytes = v.totalBytes,
-                audioBytes = if (t.audio >= 0) index.audio?.totalBytes else null,
-            )
-        } finally {
-            ex.unselectTrack(t.video)
-        }
-    }.getOrNull()
-
-    /**
-     * 목차를 못 읽을 때: 키프레임에서 다음 키프레임으로 건너뛰며 위치만 모은다.
-     * 샘플을 하나씩 넘기면 파일 전체를 읽어 큰 영상에서 몇 분이 걸리므로, 키프레임만 읽고
-     * 시간도 [HOP_LIMIT_MS]로 제한한다. 데이터량은 파일 크기와 시각 비율로 어림한다.
-     */
-    private fun hopScan(ex: MediaExtractor, t: Tracks, durationUs: Long, fileSize: Long, r: MediaMetadataRetriever): Scan {
-        ex.selectTrack(t.video)
-        val keys = ArrayList<Long>()
-        if (ex.sampleTrackIndex >= 0) {
-            var cur = ex.sampleTime
-            if ((ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0) {
-                keys.add(cur)
-            } else {
-                ex.seekTo(cur, MediaExtractor.SEEK_TO_NEXT_SYNC)
-                if (ex.sampleTrackIndex >= 0) cur = ex.sampleTime.also { keys.add(it) }
-            }
-            val deadline = System.currentTimeMillis() + HOP_LIMIT_MS
-            while (System.currentTimeMillis() < deadline) {
-                ex.seekTo(cur + 1, MediaExtractor.SEEK_TO_NEXT_SYNC)
-                if (ex.sampleTrackIndex < 0) break
-                val k = ex.sampleTime
-                if (k <= cur) break
-                keys.add(k)
-                cur = k
-            }
-        }
-        val end = maxOf(durationUs, keys.lastOrNull() ?: 0L)
-        val audioBitrate = t.audioFormat?.takeIf { it.containsKey(MediaFormat.KEY_BIT_RATE) }
-            ?.getInteger(MediaFormat.KEY_BIT_RATE)?.toLong() ?: 128_000L
-        val audioBytes = if (t.audio >= 0) (audioBitrate * end / 8_000_000L).coerceAtMost(fileSize / 2) else null
-        val videoBytes = (fileSize - (audioBytes ?: 0L)).coerceAtLeast(0L)
-        val start = keys.firstOrNull() ?: 0L
-        val span = (end - start).coerceAtLeast(1L)
-        val keyframes = keys.map { k -> k to (videoBytes.toDouble() * (k - start) / span).toLong() }
-        val frameCount = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toIntOrNull()
-        val fps = t.videoFormat.takeIf { it.containsKey(MediaFormat.KEY_FRAME_RATE) }
-            ?.getNumber(MediaFormat.KEY_FRAME_RATE)?.toDouble() ?: 30.0
-        val frames = frameCount ?: (span * fps / 1_000_000).toInt().coerceAtLeast(1)
-        // 첫 프레임부터 마지막 프레임까지의 간격이 (프레임 수 - 1) / fps 가 되도록 맞춘다.
-        val lastPts = start + ((frames - 1).coerceAtLeast(0) * 1_000_000.0 / fps).toLong()
-        return Scan(keyframes, frames, start, lastPts, videoBytes, audioBytes)
     }
 
     /** 코덱 설정 데이터(SPS/PPS 등)의 지문. 같아야 한 트랙으로 이어 붙여도 재생된다. */
@@ -1069,7 +1001,6 @@ class MediaEngine(
 
     companion object {
         private const val FOLDER = "ZamZam"
-        private const val HOP_LIMIT_MS = 15_000L
         private val VIDEO_MIME = mapOf(
             "mp4" to "video/mp4",
             "m4v" to "video/x-m4v",

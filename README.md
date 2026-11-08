@@ -37,6 +37,11 @@
 | `android/.../MediaEngine.kt` | MediaExtractor → MediaMuxer 샘플 복사, MediaStore 저장, 시스템 사진 선택기, 동영상 내려받기(MediaStore 에 바로 기록) |
 | `ios/Runner/AppDelegate.swift` | PHPicker, AVAssetExportSession(Passthrough), 사진 앱 저장, 동영상 내려받기(URLSession) |
 
+## 설치·공존
+
+브라우저 버전의 앱 ID 는 `io.github.may6ixsong.zamzam.browser`(이름 "ZamZam 브라우저")라서,
+브라우저가 없던 편집 전용 버전(v1.0.9, `io.github.may6ixsong.zamzam`, 이름 "ZamZam")과 한 폰에 함께 설치된다.
+
 ## 빌드
 
 ```sh
