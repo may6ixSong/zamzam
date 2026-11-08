@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
+import '../core/diag_log.dart';
 import '../core/media_engine.dart';
 import '../core/time_format.dart';
 import '../core/trim_range.dart';
 import '../core/video_info.dart';
+import 'diagnosis.dart';
 import 'theme.dart';
 import 'trim_preview_screen.dart';
 import 'time_fields.dart';
@@ -37,6 +39,10 @@ class _TrimScreenState extends State<TrimScreen> {
 
   /// 불러오는 중 지금 하는 일(멈춘 것처럼 보이지 않게, 어디서 막혔는지 알 수 있게).
   String _loadingStep = '';
+
+  /// 문제 진단용: 마지막으로 연(열려고 한) 원본과 고친 사본 주소.
+  String? _sourceUri;
+  String? _repairedUri;
   bool _dragging = false;
 
   bool _seeking = false;
@@ -86,19 +92,33 @@ class _TrimScreenState extends State<TrimScreen> {
   /// 키프레임 정보가 깨진 파일(브라우저로 받은 스트리밍 영상 등)이거나 열리지 않으면,
   /// 고친 사본을 만들어 그걸로 다시 연다([repaired]면 이미 고친 사본이라 다시 고치지 않는다).
   Future<void> _load(String uri, {bool repaired = false}) async {
+    if (!repaired) {
+      _sourceUri = uri;
+      _repairedUri = null;
+      DiagLog.add('영상 열기: $uri');
+    } else {
+      _repairedUri = uri;
+    }
     setState(() {
       _loading = true;
       _loadingStep = '영상 정보를 읽는 중… (긴 영상은 오래 걸려요)';
     });
+    final watch = Stopwatch()..start();
     VideoInfo info;
     try {
       info = await _engine.probe(uri);
+      DiagLog.add(
+        '정보 읽기 성공(${watch.elapsedMilliseconds}ms): 길이 ${info.durationUs}us, '
+        'fps ${info.fps.toStringAsFixed(2)}, 키프레임 ${info.keyframesUs.length}개, ${info.videoMime}',
+      );
     } catch (e) {
+      DiagLog.add('정보 읽기 실패(${watch.elapsedMilliseconds}ms): $e');
       if (!repaired) return _repairAndLoad(uri);
       _failLoad('영상을 열지 못했어요: ${e is PlatformException ? e.message : e}');
       return;
     }
     if (!repaired && needsRepair(keyframesUs: info.keyframesUs, durationUs: info.durationUs, fps: info.fps)) {
+      DiagLog.add('키프레임 정보가 이상해 고친 사본을 만듦');
       return _repairAndLoad(uri);
     }
     try {
@@ -108,9 +128,11 @@ class _TrimScreenState extends State<TrimScreen> {
         return;
       }
       if (mounted) setState(() => _loadingStep = '미리보기를 준비하는 중…');
+      watch.reset();
       final old = _ctrl;
       final ctrl = createController(info.uri);
       await ctrl.initialize();
+      DiagLog.add('재생기 준비 성공(${watch.elapsedMilliseconds}ms)');
       ctrl.addListener(_onTick);
       await old?.dispose();
       if (!mounted) {
@@ -129,9 +151,11 @@ class _TrimScreenState extends State<TrimScreen> {
       final thumbs = await _engine.thumbnails(info.uri, count: 12, height: 120);
       if (mounted && _info == info) setState(() => _thumbs = thumbs);
     } on PlatformException catch (e) {
+      DiagLog.add('재생기/썸네일 실패: ${e.code} ${e.message}');
       _failLoad('영상을 열지 못했어요: ${e.message}');
     } catch (e) {
       // 어떤 오류든 로딩 화면에 갇히지 않게 한다.
+      DiagLog.add('재생기/썸네일 실패: $e');
       _failLoad('영상을 열지 못했어요: $e');
     }
   }
@@ -143,10 +167,13 @@ class _TrimScreenState extends State<TrimScreen> {
     final sub = _engine.progress.listen((p) {
       if (mounted) setState(() => _loadingStep = '자르기에 맞게 영상을 정리하는 중… ${(p * 100).round()}%');
     });
+    final watch = Stopwatch()..start();
     String fixed;
     try {
       fixed = await _engine.repair(uri);
+      DiagLog.add('사본 만들기 성공(${watch.elapsedMilliseconds}ms): $fixed');
     } catch (e) {
+      DiagLog.add('사본 만들기 실패(${watch.elapsedMilliseconds}ms): $e');
       _failLoad('이 영상은 자를 수 없는 형식이에요: ${e is PlatformException ? e.message : e}');
       return;
     } finally {
@@ -155,10 +182,33 @@ class _TrimScreenState extends State<TrimScreen> {
     await _load(fixed, repaired: true);
   }
 
-  void _failLoad(String message) {
+  /// 열기 실패: 이유와 함께 '문제 진단'을 바로 할 수 있는 창을 띄운다.
+  Future<void> _failLoad(String message) async {
     if (!mounted) return;
     setState(() => _loading = false);
-    _toast(message);
+    final diagnose = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        icon: const Icon(Icons.error_outline_rounded, color: Palette.bad, size: 36),
+        title: const Text('영상을 열지 못했어요', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+        content: Text(message, style: const TextStyle(height: 1.5)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('닫기')),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(c, true),
+            icon: const Icon(Icons.bug_report_outlined, size: 18),
+            label: const Text('문제 진단'),
+          ),
+        ],
+      ),
+    );
+    if (diagnose == true) await _diagnose();
+  }
+
+  Future<void> _diagnose() async {
+    final src = _sourceUri;
+    if (src == null || !mounted) return;
+    await runDiagnosis(context, uris: [src, ?_repairedUri]);
   }
 
   // ---------------------------------------------------------------- playback
@@ -373,6 +423,8 @@ class _TrimScreenState extends State<TrimScreen> {
         appBar: AppBar(
           title: const Text('동영상 자르기'),
           actions: [
+            if (_sourceUri != null && !_loading)
+              IconButton(tooltip: '문제 진단', onPressed: _diagnose, icon: const Icon(Icons.bug_report_outlined)),
             if (_info != null)
               Padding(
                 padding: const EdgeInsets.only(right: 10),

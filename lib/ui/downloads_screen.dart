@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -12,7 +11,7 @@ import '../core/time_format.dart';
 import '../core/video_info.dart';
 import '../core/web_address.dart';
 import 'export_flow.dart';
-import 'video_view.dart';
+import 'diagnosis.dart';
 import 'merge_screen.dart';
 import 'theme.dart';
 import 'trim_screen.dart';
@@ -279,56 +278,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     );
   }
 
-  Future<void> _diagnose(DownloadItem item) async {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const AlertDialog(
-        content: Row(
-          children: [
-            SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
-            SizedBox(width: 16),
-            Expanded(child: Text('진단하는 중… (자르기를 시험해 봐요)')),
-          ],
-        ),
-      ),
-    );
-    String text;
-    try {
-      text = await MediaEngine.instance.diagnose(item.uri);
-    } catch (e) {
-      text = '진단 실패: $e';
-    }
-    // 자르기 화면의 미리보기 재생기도 열어 본다.
-    final player = createController(item.uri);
-    try {
-      await player.initialize().timeout(const Duration(seconds: 20));
-      final v = player.value;
-      text = '$text\n[재생기] 성공: ${v.size.width.round()}x${v.size.height.round()}, ${v.duration.inMilliseconds}ms';
-    } catch (e) {
-      text = '$text\n[재생기] 실패: $e';
-    } finally {
-      await player.dispose();
-    }
-    text = '$text\n출처: ${item.sourceUrl}';
-    if (!mounted) return;
-    Navigator.pop(context);
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('진단 결과를 복사했어요'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: SelectableText(text, style: const TextStyle(fontSize: 11.5, fontFamily: 'monospace')),
-          ),
-        ),
-        actions: [FilledButton(onPressed: () => Navigator.pop(c), child: const Text('확인'))],
-      ),
-    );
-  }
+  Future<void> _diagnose(DownloadItem item) => runDiagnosis(context, uris: [item.uri], note: '출처: ${item.sourceUrl}');
 
   void _toast(String msg) {
     if (!mounted) return;

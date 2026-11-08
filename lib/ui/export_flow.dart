@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/diag_log.dart';
 import '../core/media_engine.dart';
 import '../core/time_format.dart';
 import 'theme.dart';
@@ -35,6 +36,11 @@ Future<bool> runExport(
     error = '$e';
   }
   navigator.pop();
+  DiagLog.add(
+    result != null
+        ? '$title 성공: ${result.name}, ${result.sizeBytes}바이트, ${result.durationUs}us'
+        : '$title 실패: ${error ?? '취소'}',
+  );
   if (result != null) {
     if (!context.mounted) return true;
     await showDialog<void>(
