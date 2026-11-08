@@ -40,14 +40,14 @@ jobs:
           channel: stable
           cache: true
 
-      # 시크릿이 없을 때 쓰는 디버그 서명 키를 빌드 캐시에 보관해 매번 같은 키로 서명한다.
+      # 시크릿이 없을 때 쓸 서명 키를 빌드 캐시에 보관해 매번 같은 키로 서명한다.
       # (없으면 빌드마다 새 키가 만들어져 업데이트 때마다 앱을 지우고 다시 설치해야 했다.)
-      # 저장소에는 키나 비밀번호를 넣지 않는다.
-      - name: Reuse debug signing key
+      # 저장소에는 키를 넣지 않는다. 비밀번호는 안드로이드 디버그 키의 공개된 기본값이다.
+      - name: Reuse signing key
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: zamzam-debug-keystore-v1
+          path: ~/.zamzam-signing
+          key: zamzam-signing-v1
 
       # 저장소 시크릿 ZAMZAM_KEYSTORE_BASE64 등이 있으면 같은 키로 서명해 덮어 설치가 가능하다.
       - name: Signing key (optional)
@@ -67,7 +67,22 @@ jobs:
             } >> "$GITHUB_ENV"
             echo "Signing with repository key"
           else
-            echo "No signing secret: using a debug key"
+            mkdir -p "$HOME/.zamzam-signing"
+            KS="$HOME/.zamzam-signing/debug.keystore"
+            if [ ! -f "$KS" ]; then
+              keytool -genkeypair -keystore "$KS" -storetype PKCS12 -alias androiddebugkey \
+                -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 36500 \
+                -dname "CN=Android Debug,O=Android,C=US"
+              echo "Created a new cached signing key"
+            else
+              echo "Reusing the cached signing key"
+            fi
+            {
+              echo "ZAMZAM_KEYSTORE_PATH=$KS"
+              echo "ZAMZAM_KEYSTORE_PASSWORD=android"
+              echo "ZAMZAM_KEY_ALIAS=androiddebugkey"
+              echo "ZAMZAM_KEY_PASSWORD=android"
+            } >> "$GITHUB_ENV"
           fi
 
       - name: Build APK
