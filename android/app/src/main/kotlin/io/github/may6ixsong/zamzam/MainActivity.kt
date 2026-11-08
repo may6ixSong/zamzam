@@ -13,6 +13,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var pendingPick: MethodChannel.Result? = null
     private var pendingFiles: MethodChannel.Result? = null
     private var engine: MediaEngine? = null
+    private var nativePlayer: NativePlayer? = null
 
     // 시스템 사진 선택기(권한 불필요). 실행 전에 등록해야 해서 필드로 둔다.
     private val pickOne = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -37,10 +38,16 @@ class MainActivity : FlutterFragmentActivity() {
             @Suppress("DEPRECATION")
             WebViewFlutterAndroidExternalApi.getWebView(flutterEngine, id)
         }
+        nativePlayer = NativePlayer(
+            applicationContext,
+            flutterEngine.renderer,
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "zamzam/player"),
+        )
     }
 
     override fun onDestroy() {
         engine?.shutdown()
+        nativePlayer?.shutdown()
         super.onDestroy()
     }
 

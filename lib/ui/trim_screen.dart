@@ -133,10 +133,7 @@ class _TrimScreenState extends State<TrimScreen> {
       final old = _ctrl;
       // 미리보기 재생기는 자르기·저장에 필요 없다. 응답이 없거나 실패하면 재생 없이(정지 화면으로) 연다.
       final ctrl = await _openPlayer(info.uri);
-      if (ctrl != null) {
-        DiagLog.add('재생기 준비 성공(${watch.elapsedMilliseconds}ms)');
-        ctrl.addListener(_onTick);
-      }
+      ctrl?.addListener(_onTick);
       if (old != null) unawaited(old.dispose().catchError((_) {}));
       if (!mounted) {
         await ctrl?.dispose();
@@ -167,26 +164,11 @@ class _TrimScreenState extends State<TrimScreen> {
     }
   }
 
-  /// 미리보기 재생기를 연다. [playerTimeout] 안에 준비되지 않거나 실패하면 null(재생 없이 편집).
-  /// 늦게 준비되면 그때 정리한다.
-  static const playerTimeout = Duration(seconds: 10);
-
+  /// 미리보기 재생기를 연다(기본 → 안드로이드 기본 재생기). 둘 다 안 되면 null(재생 없이 편집).
   Future<VideoPlayerController?> _openPlayer(String uri) async {
-    final watch = Stopwatch()..start();
-    final ctrl = createController(uri);
-    final ready = ctrl.initialize();
-    try {
-      await ready.timeout(playerTimeout);
-      return ctrl;
-    } on TimeoutException {
-      DiagLog.add('재생기 응답 없음(${watch.elapsedMilliseconds}ms): 재생 없이 편집');
-      unawaited(ready.then((_) => ctrl.dispose(), onError: (_) => ctrl.dispose()).catchError((_) {}));
-    } catch (e) {
-      DiagLog.add('재생기 실패(${watch.elapsedMilliseconds}ms): $e → 재생 없이 편집');
-      // 고장 난 재생기는 정리도 멈출 수 있어 기다리지 않는다.
-      unawaited(ctrl.dispose().catchError((_) {}));
-    }
-    return null;
+    final ctrl = await openPreviewPlayer(uri, log: DiagLog.add);
+    if (ctrl == null) DiagLog.add('재생기를 열지 못해 재생 없이 편집');
+    return ctrl;
   }
 
   /// 자르기에 맞게 고친 사본을 만들어(원본은 그대로) 그걸로 연다.

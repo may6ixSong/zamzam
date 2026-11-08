@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../core/native_player.dart';
 import '../core/time_format.dart';
 import 'theme.dart';
 
@@ -12,6 +14,41 @@ VideoPlayerController createController(String uri) {
   // 고친 사본(file://)은 파일로, 갤러리 영상(content://)은 그대로 연다.
   if (uri.startsWith('file://')) return VideoPlayerController.file(File(Uri.parse(uri).toFilePath()));
   return Platform.isAndroid ? VideoPlayerController.contentUri(Uri.parse(uri)) : VideoPlayerController.file(File(uri));
+}
+
+/// 안드로이드 기본 재생기로 다시 열어 볼지(테스트에서 바꾼다).
+bool nativePreviewEnabled = Platform.isAndroid;
+
+/// 미리보기 재생기를 연다. 기본 재생기(ExoPlayer)가 [timeout] 안에 준비되지 않거나 실패하면
+/// 안드로이드 기본 재생기(MediaPlayer)로 다시 열어 본다. 둘 다 안 되면 null(정지 화면으로 편집).
+/// [log]에 어떤 재생기로 열었는지 남긴다. 고장 난 재생기는 정리도 멈출 수 있어 기다리지 않는다.
+Future<VideoPlayerController?> openPreviewPlayer(
+  String uri, {
+  Duration timeout = const Duration(seconds: 10),
+  void Function(String)? log,
+}) async {
+  Future<VideoPlayerController?> attempt(VideoPlayerController ctrl, String name) async {
+    final watch = Stopwatch()..start();
+    final ready = ctrl.initialize();
+    try {
+      await ready.timeout(timeout);
+      log?.call('$name 재생기 준비 성공(${watch.elapsedMilliseconds}ms)');
+      return ctrl;
+    } on TimeoutException {
+      log?.call('$name 재생기 응답 없음(${watch.elapsedMilliseconds}ms)');
+      unawaited(ready.then((_) => ctrl.dispose(), onError: (_) => ctrl.dispose()).catchError((_) {}));
+    } catch (e) {
+      log?.call('$name 재생기 실패(${watch.elapsedMilliseconds}ms): $e');
+      unawaited(ctrl.dispose().catchError((_) {}));
+    }
+    return null;
+  }
+
+  final first = await attempt(createController(uri), '기본');
+  if (first != null) return first;
+  if (!nativePreviewEnabled) return null;
+  final native = VideoPlayerController.networkUrl(Uri.parse('${NativePlayerPlatform.scheme}$uri'));
+  return attempt(native, '안드로이드');
 }
 
 /// 16:9 틀 안에 영상을 맞춰 넣고, 가운데 재생 버튼과 왼쪽 아래 시간 표시를 얹는다.

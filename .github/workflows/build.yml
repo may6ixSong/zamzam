@@ -40,6 +40,15 @@ jobs:
           channel: stable
           cache: true
 
+      # 시크릿이 없을 때 쓰는 디버그 서명 키를 빌드 캐시에 보관해 매번 같은 키로 서명한다.
+      # (없으면 빌드마다 새 키가 만들어져 업데이트 때마다 앱을 지우고 다시 설치해야 했다.)
+      # 저장소에는 키나 비밀번호를 넣지 않는다.
+      - name: Reuse debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: zamzam-debug-keystore-v1
+
       # 저장소 시크릿 ZAMZAM_KEYSTORE_BASE64 등이 있으면 같은 키로 서명해 덮어 설치가 가능하다.
       - name: Signing key (optional)
         env:
