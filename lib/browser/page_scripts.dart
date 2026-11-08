@@ -20,7 +20,16 @@ const longPressScript = r'''
   var HOLD_MS = 380, SLOP = 14;
   var MEDIA = /\.(m3u8|mp4|m4v|webm|mov|mkv|mpd)(\?|#|$)|[?&](format|type)=(m3u8|hls|mp4)|\/manifest|playlist\.m3u8/i;
   var SKIP = /\.(m4s|ts|aac|vtt|srt|jpg|jpeg|png|gif|webp|js|css)(\?|#|$)|\/(ads?|doubleclick|googlesyndication)\b/i;
-  var urls = [];
+  // 재생 목록(m3u8/mpd)은 따로 모아 둔다. 영상 조각(.mp4 등)이 많이 쌓여도
+  // 맨 처음 받은 '화질 목록' 재생 목록이 밀려나지 않게 한다.
+  var urls = [], lists = [];
+
+  function remember(arr, u, max) {
+    var i = arr.indexOf(u);
+    if (i >= 0) arr.splice(i, 1);
+    arr.push(u);
+    if (arr.length > max) arr.shift();
+  }
 
   function note(u) {
     try {
@@ -29,10 +38,8 @@ const longPressScript = r'''
       if (u.indexOf('blob:') === 0 || u.indexOf('data:') === 0) return;
       u = new URL(u, location.href).href;
       if (!MEDIA.test(u) || SKIP.test(u)) return;
-      var i = urls.indexOf(u);
-      if (i >= 0) urls.splice(i, 1);
-      urls.push(u);
-      if (urls.length > 60) urls.shift();
+      if (/\.(m3u8|mpd)(\?|#|$)|m3u8|\/manifest/i.test(u)) remember(lists, u, 80);
+      else remember(urls, u, 60);
     } catch (e) {}
   }
 
@@ -53,7 +60,8 @@ const longPressScript = r'''
       var es = performance.getEntriesByType('resource');
       for (var i = 0; i < es.length; i++) note(es[i].name);
     } catch (e) {}
-    return urls.slice().reverse();
+    // 재생 목록 먼저(최근 것부터), 그다음 영상 파일.
+    return lists.slice().reverse().concat(urls.slice().reverse());
   }
   window.__zzCandidates = candidates;
 

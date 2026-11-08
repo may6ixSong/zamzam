@@ -58,7 +58,7 @@ class _VideoSheet extends StatefulWidget {
 }
 
 class _VideoSheetState extends State<_VideoSheet> {
-  late final String? _src;
+  late String? _src;
   late final VideoSourceKind _kind;
   late final String _name;
 
@@ -75,7 +75,8 @@ class _VideoSheetState extends State<_VideoSheet> {
     _src = srcKind == VideoSourceKind.hls && !_hlsSupported ? null : found;
     _kind = _src != null ? srcKind! : (srcKind ?? classifyVideoSource(hit.src));
     _name = suggestFileName(src: _src ?? hit.src, title: hit.title.isNotEmpty ? hit.title : widget.tab.title);
-    if (_src != null) _inspect(_src);
+    final first = _src;
+    if (first != null) _inspect(first);
   }
 
   /// 화질 목록과 용량을 알아본다. 실패하면 '원본'만 보여 준다.
@@ -84,10 +85,22 @@ class _VideoSheetState extends State<_VideoSheet> {
     final android = defaultTargetPlatform == TargetPlatform.android;
     var info = VideoInspection(isHls: _kind == VideoSourceKind.hls);
     if (android) {
-      try {
-        final m = await MediaEngine.instance.inspectVideo(src, referer: hit.page, userAgent: hit.userAgent);
-        info = VideoInspection.fromMap(m);
-      } catch (_) {}
+      // 스트리밍이면 페이지가 받은 재생 목록들을 모두 알아보고 '화질 목록'을 고른다.
+      final urls = _kind == VideoSourceKind.hls
+          ? [
+              src,
+              for (final c in [hit.src, ...hit.sources, ...hit.candidates])
+                if (classifyVideoSource(c) == VideoSourceKind.hls) c,
+            ]
+          : [src];
+      final picked = await chooseStream(
+        urls,
+        (u) => MediaEngine.instance.inspectVideo(u, referer: hit.page, userAgent: hit.userAgent),
+      );
+      if (picked != null) {
+        info = picked.info;
+        _src = picked.url;
+      }
     }
     if (!mounted) return;
     setState(() {

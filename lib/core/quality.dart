@@ -125,3 +125,28 @@ List<QualityOption> qualityOptions(
   }
   return options;
 }
+
+/// 스트리밍 주소들을 차례로 알아보고, 여러 화질이 들어 있는 '화질 목록' 재생 목록을 고른다.
+///
+/// 재생기는 화질 목록을 받은 뒤 지금 재생할 화질 하나의 재생 목록을 따로 받으므로, 가장 최근 주소는
+/// 대개 화질이 하나뿐이다. 화질 목록이 없으면 처음으로 알아보기에 성공한 주소를 쓴다. 모두 실패하면 null.
+Future<({String url, VideoInspection info})?> chooseStream(
+  List<String> urls,
+  Future<Map<dynamic, dynamic>> Function(String url) inspect, {
+  int maxTries = 6,
+  Duration timeout = const Duration(seconds: 10),
+}) async {
+  ({String url, VideoInspection info})? fallback;
+  var tries = 0;
+  for (final url in urls.toSet()) {
+    if (tries++ >= maxTries) break;
+    try {
+      final info = VideoInspection.fromMap(await inspect(url).timeout(timeout));
+      if (info.isHls && info.variants.length > 1) return (url: url, info: info);
+      fallback ??= (url: url, info: info);
+    } catch (_) {
+      // 이 주소는 건너뛰고 다음 것을 본다.
+    }
+  }
+  return fallback;
+}

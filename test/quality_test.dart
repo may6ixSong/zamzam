@@ -64,4 +64,39 @@ void main() {
     );
     expect(o.single.label, '원본');
   });
+
+  group('스트리밍 화질 목록 고르기', () {
+    Map<String, Object> media() => {'kind': 'hls', 'durationSec': 60.0, 'variants': <Object>[]};
+    Map<String, Object> master() => {
+      'kind': 'hls',
+      'durationSec': 60.0,
+      'variants': [
+        {'url': 'https://a/1080.m3u8', 'width': 1920, 'height': 1080, 'bandwidth': 5000000},
+        {'url': 'https://a/360.m3u8', 'width': 640, 'height': 360, 'bandwidth': 800000},
+      ],
+    };
+
+    test('가장 최근 주소(화질 하나)보다 화질 목록을 고른다', () async {
+      final r = await chooseStream([
+        'https://a/360.m3u8',
+        'https://a/master.m3u8',
+      ], (u) async => u.contains('master') ? master() : media());
+      expect(r!.url, 'https://a/master.m3u8');
+      expect(qualityOptions(r.info).map((o) => o.label), ['1080p', '360p']);
+    });
+
+    test('화질 목록이 없으면 처음 성공한 주소', () async {
+      final r = await chooseStream(['https://a/x.m3u8', 'https://a/y.m3u8'], (u) async => media());
+      expect(r!.url, 'https://a/x.m3u8');
+    });
+
+    test('실패한 주소는 건너뛰고, 모두 실패하면 null', () async {
+      final r = await chooseStream([
+        'https://a/bad.m3u8',
+        'https://a/master.m3u8',
+      ], (u) async => u.contains('bad') ? throw Exception('403') : master());
+      expect(r!.url, 'https://a/master.m3u8');
+      expect(await chooseStream(['https://a/bad.m3u8'], (u) async => throw Exception('x')), isNull);
+    });
+  });
 }
