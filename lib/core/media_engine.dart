@@ -111,6 +111,9 @@ class MediaEngine {
       }) ??
       const {};
 
+  /// 문제 진단 글(파일 정보와 자르기 시험 결과). 개발자에게 보내 원인을 찾는 데 쓴다.
+  Future<String> diagnose(String uri) async => await _channel.invokeMethod<String>('diagnose', {'uri': uri}) ?? '';
+
   /// 자르기가 안 되는 영상을 고친 사본(앱 임시 폴더의 file:// 주소)을 만든다. 원본은 그대로.
   /// 진행률은 [progress]로 온다.
   Future<String> repair(String uri) async {

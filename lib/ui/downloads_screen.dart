@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -11,6 +12,7 @@ import '../core/time_format.dart';
 import '../core/video_info.dart';
 import '../core/web_address.dart';
 import 'export_flow.dart';
+import 'video_view.dart';
 import 'merge_screen.dart';
 import 'theme.dart';
 import 'trim_screen.dart';
@@ -143,6 +145,16 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 ),
                 onTap: () => Navigator.pop(c, 'copy'),
               ),
+            if (defaultTargetPlatform == TargetPlatform.android)
+              ListTile(
+                leading: const Icon(Icons.bug_report_outlined),
+                title: const Text('문제 진단'),
+                subtitle: const Text(
+                  '자르기가 안 될 때: 원인 정보를 모아 복사해요',
+                  style: TextStyle(fontSize: 12.5, color: Palette.muted),
+                ),
+                onTap: () => Navigator.pop(c, 'diagnose'),
+              ),
             ListTile(
               leading: const Icon(Icons.delete_outline_rounded, color: Palette.bad),
               title: const Text('목록에서 지우기'),
@@ -169,6 +181,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         await _compress(item);
       case 'open':
         MediaEngine.instance.openInGallery(item.uri).catchError((_) => _toast('열 수 있는 앱이 없어요'));
+      case 'diagnose':
+        await _diagnose(item);
       case 'copy':
         Clipboard.setData(ClipboardData(text: item.pageUrl));
         _toast('주소를 복사했어요');
@@ -256,6 +270,57 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         sourceUrl: item.sourceUrl,
         pageUrl: item.pageUrl,
         time: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<void> _diagnose(DownloadItem item) async {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(
+          children: [
+            SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5)),
+            SizedBox(width: 16),
+            Expanded(child: Text('진단하는 중… (자르기를 시험해 봐요)')),
+          ],
+        ),
+      ),
+    );
+    String text;
+    try {
+      text = await MediaEngine.instance.diagnose(item.uri);
+    } catch (e) {
+      text = '진단 실패: $e';
+    }
+    // 자르기 화면의 미리보기 재생기도 열어 본다.
+    final player = createController(item.uri);
+    try {
+      await player.initialize().timeout(const Duration(seconds: 20));
+      final v = player.value;
+      text = '$text\n[재생기] 성공: ${v.size.width.round()}x${v.size.height.round()}, ${v.duration.inMilliseconds}ms';
+    } catch (e) {
+      text = '$text\n[재생기] 실패: $e';
+    } finally {
+      await player.dispose();
+    }
+    text = '$text\n출처: ${item.sourceUrl}';
+    if (!mounted) return;
+    Navigator.pop(context);
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('진단 결과를 복사했어요'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(text, style: const TextStyle(fontSize: 11.5, fontFamily: 'monospace')),
+          ),
+        ),
+        actions: [FilledButton(onPressed: () => Navigator.pop(c), child: const Text('확인'))],
       ),
     );
   }

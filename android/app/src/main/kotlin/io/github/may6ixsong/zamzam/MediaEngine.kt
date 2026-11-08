@@ -85,6 +85,10 @@ class MediaEngine(
         when (call.method) {
             "pickVideos" -> picker(call.argument<Boolean>("multiple") == true, result)
             "probe" -> background(probeExecutor, result) { probe(call.uri("uri")) }
+            "diagnose" -> {
+                cancelled.set(false)
+                background(exportExecutor, result) { diagnoseFile(call.uri("uri")) }
+            }
             "listInfo" -> background(listExecutor, result) { listInfo(call.uri("uri"), call.long("height").toInt()) }
             "thumbnails" -> background(probeExecutor, result) {
                 thumbnails(call.uri("uri"), call.long("count").toInt(), call.long("height").toInt())
@@ -874,6 +878,95 @@ class MediaEngine(
             discard(out)
             throw e
         }
+    }
+
+    /**
+     * 문제 진단: 파일 정보, 트랙 형식, 앞쪽 샘플, 영상 정보 읽기, 그리고 실제 자르기(앞 3초)를 시험해
+     * 결과를 글로 돌려준다. 시험으로 만든 파일은 바로 지운다. 각 단계는 실패해도 다음 단계를 계속한다.
+     */
+    private fun diagnoseFile(uri: Uri): String {
+        val sb = StringBuilder()
+        fun line(s: String) = sb.append(s).append('\n')
+        fun step(name: String, block: () -> Unit) {
+            try {
+                block()
+            } catch (e: Throwable) {
+                line("[$name] 실패: ${e.javaClass.simpleName}: ${e.message}")
+                e.stackTrace.take(4).forEach { line("    at $it") }
+            }
+        }
+        line("ZamZam 진단 · Android ${android.os.Build.VERSION.SDK_INT} · ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+        line("uri: $uri")
+        step("파일") {
+            val (name, size) = nameAndSize(uri)
+            line("이름: $name, 크기: $size")
+            ctx.contentResolver.query(
+                uri, arrayOf(MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.OWNER_PACKAGE_NAME), null, null, null,
+            )?.use { c -> if (c.moveToFirst()) line("MIME: ${c.getString(0)}, 소유: ${c.getString(1)}") }
+        }
+        step("메타데이터") {
+            val r = MediaMetadataRetriever()
+            try {
+                r.setDataSource(ctx, uri)
+                val keys = mapOf(
+                    "길이ms" to MediaMetadataRetriever.METADATA_KEY_DURATION,
+                    "MIME" to MediaMetadataRetriever.METADATA_KEY_MIMETYPE,
+                    "가로" to MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH,
+                    "세로" to MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT,
+                    "회전" to MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION,
+                    "비트레이트" to MediaMetadataRetriever.METADATA_KEY_BITRATE,
+                    "프레임수" to MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT,
+                )
+                line(keys.entries.joinToString(", ") { "${it.key}=${r.extractMetadata(it.value)}" })
+            } finally {
+                r.release()
+            }
+        }
+        step("트랙") {
+            val ex = openExtractor(uri)
+            try {
+                for (i in 0 until ex.trackCount) line("트랙$i: ${ex.getTrackFormat(i)}")
+                val t = tracksOf(ex)
+                ex.selectTrack(t.video)
+                var n = 0
+                var sync = 0
+                val first = ArrayList<String>()
+                val deadline = System.currentTimeMillis() + 5000
+                while (ex.sampleTrackIndex >= 0 && System.currentTimeMillis() < deadline) {
+                    val isSync = (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0
+                    if (isSync) sync++
+                    if (n < 8) first += "${ex.sampleTime}/${ex.sampleSize}/${if (isSync) "K" else "-"}"
+                    n++
+                    if (!ex.advance()) break
+                }
+                line("영상 샘플(5초 동안 센 것): $n, 키프레임 $sync")
+                line("앞 샘플(시각/크기/키): ${first.joinToString(" ")}")
+            } finally {
+                ex.release()
+            }
+        }
+        var durationUs = 0L
+        step("정보 읽기(probe)") {
+            val p = probe(uri)
+            durationUs = (p["durationUs"] as Number).toLong()
+            val keys = p["keyframesUs"] as List<*>
+            line("probe 성공: 길이 ${durationUs}us, fps ${p["fps"]}, 키프레임 ${keys.size}개 (앞: ${keys.take(5)})")
+        }
+        step("자르기 시험(앞 3초)") {
+            val end = if (durationUs > 0) minOf(durationUs, 3_000_000L) else 3_000_000L
+            val r = trim(uri, 0L, end, 0)
+            line("자르기 성공: ${r["name"]}, ${r["size"]}바이트, ${r["durationUs"]}us")
+            runCatching { ctx.contentResolver.delete(Uri.parse(r["uri"] as String), null, null) }
+        }
+        step("자르기 시험(가운데 3초)") {
+            if (durationUs > 8_000_000L) {
+                val mid = durationUs / 2
+                val r = trim(uri, mid, mid + 3_000_000L, 0)
+                line("가운데 자르기 성공: ${r["size"]}바이트, ${r["durationUs"]}us")
+                runCatching { ctx.contentResolver.delete(Uri.parse(r["uri"] as String), null, null) }
+            }
+        }
+        return sb.toString()
     }
 
     /**
