@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -130,13 +131,15 @@ class _TrimScreenState extends State<TrimScreen> {
       if (mounted) setState(() => _loadingStep = '미리보기를 준비하는 중…');
       watch.reset();
       final old = _ctrl;
-      final ctrl = createController(info.uri);
-      await ctrl.initialize();
-      DiagLog.add('재생기 준비 성공(${watch.elapsedMilliseconds}ms)');
-      ctrl.addListener(_onTick);
-      await old?.dispose();
+      // 미리보기 재생기는 자르기·저장에 필요 없다. 응답이 없거나 실패하면 재생 없이(정지 화면으로) 연다.
+      final ctrl = await _openPlayer(info.uri);
+      if (ctrl != null) {
+        DiagLog.add('재생기 준비 성공(${watch.elapsedMilliseconds}ms)');
+        ctrl.addListener(_onTick);
+      }
+      if (old != null) unawaited(old.dispose().catchError((_) {}));
       if (!mounted) {
-        await ctrl.dispose();
+        await ctrl?.dispose();
         return;
       }
       setState(() {
@@ -148,6 +151,10 @@ class _TrimScreenState extends State<TrimScreen> {
         _still = null;
         _loading = false;
       });
+      if (ctrl == null) {
+        _showFrame(0);
+        _toast('이 영상은 미리보기 재생이 안 돼요. 정지 화면으로 구간을 정해 자를 수 있어요');
+      }
       final thumbs = await _engine.thumbnails(info.uri, count: 12, height: 120);
       if (mounted && _info == info) setState(() => _thumbs = thumbs);
     } on PlatformException catch (e) {
@@ -158,6 +165,28 @@ class _TrimScreenState extends State<TrimScreen> {
       DiagLog.add('재생기/썸네일 실패: $e');
       _failLoad('영상을 열지 못했어요: $e');
     }
+  }
+
+  /// 미리보기 재생기를 연다. [playerTimeout] 안에 준비되지 않거나 실패하면 null(재생 없이 편집).
+  /// 늦게 준비되면 그때 정리한다.
+  static const playerTimeout = Duration(seconds: 10);
+
+  Future<VideoPlayerController?> _openPlayer(String uri) async {
+    final watch = Stopwatch()..start();
+    final ctrl = createController(uri);
+    final ready = ctrl.initialize();
+    try {
+      await ready.timeout(playerTimeout);
+      return ctrl;
+    } on TimeoutException {
+      DiagLog.add('재생기 응답 없음(${watch.elapsedMilliseconds}ms): 재생 없이 편집');
+      unawaited(ready.then((_) => ctrl.dispose(), onError: (_) => ctrl.dispose()).catchError((_) {}));
+    } catch (e) {
+      DiagLog.add('재생기 실패(${watch.elapsedMilliseconds}ms): $e → 재생 없이 편집');
+      // 고장 난 재생기는 정리도 멈출 수 있어 기다리지 않는다.
+      unawaited(ctrl.dispose().catchError((_) {}));
+    }
+    return null;
   }
 
   /// 자르기에 맞게 고친 사본을 만들어(원본은 그대로) 그걸로 연다.

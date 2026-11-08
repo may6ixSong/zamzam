@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
@@ -46,7 +48,8 @@ class _TrimPreviewScreenState extends State<TrimPreviewScreen> {
   Future<void> _open() async {
     final c = createController(widget.info.uri);
     try {
-      await c.initialize();
+      // 재생기가 응답하지 않는 영상이면 기다리지 않고 '미리보기 불가'로 넘어간다(저장은 된다).
+      await c.initialize().timeout(const Duration(seconds: 10));
       await c.seekTo(Duration(microseconds: widget.actualStartUs));
       c.addListener(_onTick);
       if (!mounted) {
@@ -56,7 +59,8 @@ class _TrimPreviewScreenState extends State<TrimPreviewScreen> {
       setState(() => _ctrl = c);
       await c.play();
     } catch (_) {
-      await c.dispose();
+      // 고장 난 재생기는 정리도 멈출 수 있어 기다리지 않는다.
+      unawaited(c.dispose().catchError((_) {}));
       if (mounted) setState(() => _failed = true);
     }
   }
@@ -164,7 +168,11 @@ class _TrimPreviewScreenState extends State<TrimPreviewScreen> {
                 )
               else if (_failed)
                 const Center(
-                  child: Text('미리보기를 열지 못했어요', style: TextStyle(color: Palette.muted)),
+                  child: Text(
+                    '이 영상은 미리보기 재생이 안 돼요\n저장은 그대로 할 수 있어요',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Palette.muted, height: 1.5),
+                  ),
                 )
               else
                 const Center(child: CircularProgressIndicator()),
