@@ -3,21 +3,75 @@ import 'package:flutter/material.dart';
 import '../core/browser_data.dart';
 import '../core/web_address.dart';
 import '../ui/theme.dart';
+import 'favorites.dart';
 import 'video_sheet.dart';
 
-const _defaults = [
-  ('네이버', 'https://m.naver.com', Color(0xFF03C75A)),
-  ('구글', 'https://www.google.com', Color(0xFF4285F4)),
-  ('유튜브', 'https://m.youtube.com', Color(0xFFFF0033)),
-  ('다음', 'https://m.daum.net', Color(0xFF3F7CFF)),
-];
-
-/// 새 탭 화면: 검색창, 바로가기, 북마크.
+/// 새 탭 화면: 검색창, 즐겨찾기 바로가기, 다운로드 목록.
 class StartPage extends StatelessWidget {
-  const StartPage({super.key, required this.onOpen, required this.onSearchTap});
+  const StartPage({
+    super.key,
+    required this.onOpen,
+    required this.onSearchTap,
+    required this.onOpenInNewTab,
+    required this.onOpenAll,
+    required this.onManage,
+  });
 
+  /// 이 탭에서 연다.
   final ValueChanged<String> onOpen;
   final VoidCallback onSearchTap;
+  final ValueChanged<String> onOpenInNewTab;
+
+  /// 즐겨찾기를 모두 새 탭으로 연다.
+  final ValueChanged<List<String>> onOpenAll;
+  final VoidCallback onManage;
+
+  Future<void> _tileMenu(BuildContext context, PageEntry e) async {
+    final data = BrowserData.instance;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Palette.s1,
+      showDragHandle: true,
+      builder: (c) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: FavoriteIcon(entry: e, size: 32),
+              title: Text(e.label, style: const TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text(displayUrl(e.url), style: const TextStyle(fontSize: 12, color: Palette.muted)),
+            ),
+            const Divider(height: 8),
+            ListTile(
+              leading: const Icon(Icons.add_box_outlined),
+              title: const Text('새 탭에서 열기'),
+              onTap: () => Navigator.pop(c, 'newTab'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('수정'),
+              onTap: () => Navigator.pop(c, 'edit'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline_rounded, color: Palette.bad),
+              title: const Text('삭제'),
+              onTap: () => Navigator.pop(c, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!context.mounted) return;
+    switch (action) {
+      case 'newTab':
+        onOpenInNewTab(e.url);
+      case 'edit':
+        final r = await showFavoriteEditor(context, initial: e);
+        if (r != null) data.updateBookmark(e.url, r.$1, r.$2);
+      case 'delete':
+        data.removeBookmark(e.url);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,9 +81,9 @@ class StartPage extends StatelessWidget {
       child: ListenableBuilder(
         listenable: data,
         builder: (context, _) {
-          final marks = data.bookmarks.take(12).toList();
+          final favs = data.bookmarks;
           return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 36, 20, 24),
+            padding: const EdgeInsets.fromLTRB(16, 32, 16, 24),
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -67,16 +121,67 @@ class StartPage extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: 26),
-              Wrap(
-                alignment: WrapAlignment.spaceAround,
-                runSpacing: 18,
+              const SizedBox(height: 22),
+              Row(
                 children: [
-                  for (final (name, url, color) in _defaults)
-                    _Shortcut(label: name, letter: name.characters.first, color: color, onTap: () => onOpen(url)),
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4),
+                    child: Text('즐겨찾기', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                  ),
+                  const Spacer(),
+                  if (favs.length > 1)
+                    TextButton.icon(
+                      onPressed: () => onOpenAll([for (final f in favs) f.url]),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 17),
+                      label: Text('모두 열기 ${favs.length}'),
+                    ),
+                  TextButton(onPressed: onManage, child: const Text('편집')),
                 ],
               ),
-              const SizedBox(height: 26),
+              const SizedBox(height: 4),
+              LayoutBuilder(
+                builder: (context, c) {
+                  final perRow = (c.maxWidth / 84).floor().clamp(4, 8);
+                  final w = c.maxWidth / perRow;
+                  return Wrap(
+                    runSpacing: 14,
+                    children: [
+                      for (final f in favs)
+                        _Shortcut(
+                          width: w,
+                          icon: FavoriteIcon(entry: f),
+                          label: f.label,
+                          onTap: () => onOpen(f.url),
+                          onLongPress: () => _tileMenu(context, f),
+                        ),
+                      _Shortcut(
+                        width: w,
+                        icon: Container(
+                          width: 52,
+                          height: 52,
+                          decoration: BoxDecoration(
+                            color: Palette.s2,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Palette.line),
+                          ),
+                          child: const Icon(Icons.add_rounded, color: Palette.muted, size: 26),
+                        ),
+                        label: '추가',
+                        onTap: () async {
+                          final r = await showFavoriteEditor(context);
+                          if (r != null) data.addBookmark(r.$1, r.$2);
+                        },
+                      ),
+                    ],
+                  );
+                },
+              ),
+              if (favs.isNotEmpty)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(4, 12, 4, 0),
+                  child: Text('길게 누르면 새 탭에서 열기·수정·삭제', style: TextStyle(fontSize: 12, color: Palette.dim)),
+                ),
+              const SizedBox(height: 24),
               Material(
                 color: Palette.s1,
                 borderRadius: BorderRadius.circular(16),
@@ -92,31 +197,6 @@ class StartPage extends StatelessWidget {
                   onTap: openDownloads,
                 ),
               ),
-              if (marks.isNotEmpty) ...[
-                const SizedBox(height: 24),
-                const Text('북마크', style: TextStyle(fontSize: 13, color: Palette.muted)),
-                const SizedBox(height: 6),
-                for (final b in marks)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: CircleAvatar(
-                      radius: 16,
-                      backgroundColor: Palette.s2,
-                      child: Text(
-                        hostOf(b.url).characters.firstOrNull?.toUpperCase() ?? '?',
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                    title: Text(b.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-                    subtitle: Text(
-                      displayUrl(b.url),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, color: Palette.muted),
-                    ),
-                    onTap: () => onOpen(b.url),
-                  ),
-              ],
             ],
           );
         },
@@ -126,34 +206,45 @@ class StartPage extends StatelessWidget {
 }
 
 class _Shortcut extends StatelessWidget {
-  const _Shortcut({required this.label, required this.letter, required this.color, required this.onTap});
+  const _Shortcut({
+    required this.width,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.onLongPress,
+  });
 
+  final double width;
+  final Widget icon;
   final String label;
-  final String letter;
-  final Color color;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-    borderRadius: BorderRadius.circular(14),
-    onTap: onTap,
-    child: SizedBox(
-      width: 72,
-      child: Column(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(16)),
-            child: Text(
-              letter,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white),
+  Widget build(BuildContext context) => SizedBox(
+    width: width,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(
+          children: [
+            icon,
+            const SizedBox(height: 7),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 12.5),
+              ),
             ),
-          ),
-          const SizedBox(height: 7),
-          Text(label, style: const TextStyle(fontSize: 12.5)),
-        ],
+          ],
+        ),
       ),
     ),
   );

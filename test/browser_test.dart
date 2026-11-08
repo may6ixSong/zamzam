@@ -109,9 +109,51 @@ void main() {
     });
   });
 
+  group('즐겨찾기', () {
+    test('처음 한 번만 기본 사이트를 넣고, 지워도 다시 생기지 않는다', () async {
+      final file = MemoryJsonFile();
+      final d = BrowserData(file: file);
+      await d.load();
+      expect(d.bookmarks.map((e) => e.title), ['네이버', '구글', '유튜브', '다음']);
+      for (final b in [...d.bookmarks]) {
+        d.removeBookmark(b.url);
+      }
+      final again = BrowserData(file: file);
+      await again.load();
+      expect(again.bookmarks, isEmpty);
+    });
+
+    test('추가는 맨 뒤, 같은 주소는 이름만 바뀐다', () async {
+      final d = BrowserData(file: MemoryJsonFile({'seeded': true}));
+      await d.load();
+      d.addBookmark('https://a.com', 'A');
+      d.addBookmark('https://b.com', 'B');
+      d.addBookmark('https://a.com', 'A2');
+      expect(d.bookmarks.map((e) => '${e.url} ${e.title}'), ['https://a.com A2', 'https://b.com B']);
+    });
+
+    test('수정·순서 바꾸기', () async {
+      final d = BrowserData(file: MemoryJsonFile({'seeded': true}));
+      await d.load();
+      for (final x in ['a', 'b', 'c']) {
+        d.addBookmark('https://$x.com', x);
+      }
+      d.moveBookmark(0, 2); // a 를 맨 뒤로
+      expect(d.bookmarks.map((e) => e.title), ['b', 'c', 'a']);
+      d.moveBookmark(2, 0);
+      expect(d.bookmarks.map((e) => e.title), ['a', 'b', 'c']);
+      d.updateBookmark('https://b.com', 'https://bb.com', 'B!');
+      expect(d.bookmarks[1].url, 'https://bb.com');
+      expect(d.bookmarks[1].title, 'B!');
+      // 다른 항목과 같은 주소로 바꾸면 겹치는 항목은 하나로.
+      d.updateBookmark('https://c.com', 'https://a.com', 'A?');
+      expect(d.bookmarks.map((e) => e.title), ['B!', 'A?']);
+    });
+  });
+
   group('브라우저 기록', () {
     test('방문 기록은 최근 것이 앞, 같은 주소는 하나만', () async {
-      final file = MemoryJsonFile();
+      final file = MemoryJsonFile({'seeded': true});
       final d = BrowserData(file: file);
       await d.load();
       d.addVisit('https://a.com', 'A');
@@ -127,7 +169,7 @@ void main() {
       final again = BrowserData(file: file);
       await again.load();
       expect(again.history.length, 2);
-      expect(again.bookmarks.single.title, 'B');
+      expect(again.bookmarks.last.title, 'B');
 
       d.clearHistory();
       expect(d.history, isEmpty);

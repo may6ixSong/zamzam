@@ -92,7 +92,7 @@ class _TabsScreenState extends State<TabsScreen> {
 
 enum PageListKind { bookmarks, history }
 
-/// 북마크 또는 방문 기록. 누르면 그 주소를 돌려준다.
+/// 즐겨찾기 또는 방문 기록. 누르면 그 주소를 돌려준다.
 class PageListScreen extends StatelessWidget {
   const PageListScreen({super.key, required this.kind});
 
@@ -108,7 +108,7 @@ class PageListScreen extends StatelessWidget {
         final list = isHistory ? data.history : data.bookmarks;
         return Scaffold(
           appBar: AppBar(
-            title: Text(isHistory ? '방문 기록' : '북마크'),
+            title: Text(isHistory ? '방문 기록' : '즐겨찾기'),
             actions: [
               if (isHistory && list.isNotEmpty)
                 TextButton(
@@ -132,7 +132,7 @@ class PageListScreen extends StatelessWidget {
           body: list.isEmpty
               ? Center(
                   child: Text(
-                    isHistory ? '방문 기록이 없어요' : '북마크가 없어요\n메뉴의 ☆ 버튼으로 추가해요',
+                    isHistory ? '방문 기록이 없어요' : '즐겨찾기가 없어요\n메뉴의 ☆ 버튼으로 추가해요',
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Palette.muted, height: 1.6),
                   ),

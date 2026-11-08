@@ -13,6 +13,7 @@ import '../ui/app_keys.dart';
 import '../ui/menu_screen.dart';
 import '../ui/theme.dart';
 import 'browser_tab.dart';
+import 'favorites.dart';
 import 'page_lists.dart';
 import 'start_page.dart';
 import 'video_sheet.dart';
@@ -120,6 +121,28 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
       }
     });
     t.dispose();
+  }
+
+  /// 즐겨찾기를 모두 새 탭으로 연다. 첫 번째는 지금 보고 있는 빈 탭을 쓴다.
+  void _openAll(List<String> urls) {
+    if (urls.isEmpty) return;
+    final reuse = _tab.isStartPage && _tab.behindStart == null;
+    final first = _current;
+    for (var i = 0; i < urls.length; i++) {
+      if (i == 0 && reuse) {
+        _tab.load(urls[0]);
+      } else {
+        _newTab(url: urls[i]);
+      }
+    }
+    // 첫 번째 사이트를 보여 준다.
+    setState(() => _current = reuse ? first : _tabs.length - urls.length);
+    showToast('즐겨찾기 ${urls.length}개를 탭으로 열었어요');
+  }
+
+  Future<void> _manageFavorites() async {
+    final url = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const FavoritesScreen()));
+    if (url != null && mounted) _tab.load(url);
   }
 
   Future<void> _showTabs() async {
@@ -279,7 +302,7 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
                     _QuickButton(icon: Icons.add_box_outlined, label: '새 탭', onTap: () => Navigator.pop(c, 'newTab')),
                     _QuickButton(
                       icon: marked ? Icons.star_rounded : Icons.star_outline_rounded,
-                      label: marked ? '북마크 해제' : '북마크',
+                      label: marked ? '즐겨찾기 해제' : '즐겨찾기',
                       enabled: onPage,
                       highlight: marked,
                       onTap: () => Navigator.pop(c, 'bookmark'),
@@ -319,7 +342,7 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
                 onTap: () => Navigator.pop(c, 'editor'),
               ),
               const Divider(height: 16),
-              _MenuTile(icon: Icons.star_outline_rounded, title: '북마크', onTap: () => Navigator.pop(c, 'bookmarks')),
+              _MenuTile(icon: Icons.star_outline_rounded, title: '즐겨찾기 편집', onTap: () => Navigator.pop(c, 'bookmarks')),
               _MenuTile(icon: Icons.history_rounded, title: '방문 기록', onTap: () => Navigator.pop(c, 'history')),
               _MenuTile(
                 icon: Icons.link_rounded,
@@ -356,7 +379,7 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
         _startEdit();
       case 'bookmark':
         _data.toggleBookmark(t.url, t.title);
-        showToast(_data.isBookmarked(t.url) ? '북마크에 추가했어요' : '북마크에서 뺐어요');
+        showToast(_data.isBookmarked(t.url) ? '즐겨찾기에 추가했어요 · 새 탭 화면에 보여요' : '즐겨찾기에서 뺐어요');
       case 'share':
         SharePlus.instance.share(ShareParams(uri: Uri.tryParse(t.url), subject: t.title));
       case 'reload':
@@ -368,11 +391,7 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
       case 'editor':
         Navigator.push(context, MaterialPageRoute(builder: (_) => const MenuScreen()));
       case 'bookmarks':
-        final url = await Navigator.push<String>(
-          context,
-          MaterialPageRoute(builder: (_) => const PageListScreen(kind: PageListKind.bookmarks)),
-        );
-        if (url != null) _tab.load(url);
+        _manageFavorites();
       case 'history':
         final url = await Navigator.push<String>(
           context,
@@ -507,7 +526,13 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
                               ),
                           if (t.isStartPage)
                             Positioned.fill(
-                              child: StartPage(onOpen: (u) => t.load(u), onSearchTap: _startEdit),
+                              child: StartPage(
+                                onOpen: (u) => t.load(u),
+                                onSearchTap: _startEdit,
+                                onOpenInNewTab: (u) => _newTab(url: u),
+                                onOpenAll: _openAll,
+                                onManage: _manageFavorites,
+                              ),
                             ),
                           if (_editing)
                             Positioned.fill(
