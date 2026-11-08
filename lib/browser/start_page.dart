@@ -88,15 +88,7 @@ class StartPage extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(11),
-                      gradient: const LinearGradient(colors: [Palette.accent, Palette.violet]),
-                    ),
-                    child: const Icon(Icons.public_rounded, size: 21, color: Colors.white),
-                  ),
+                  const AppLogo(size: 38),
                   const SizedBox(width: 10),
                   const Text('ZamZam', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
                 ],
@@ -245,6 +237,48 @@ class _Shortcut extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    ),
+  );
+}
+
+/// 앱 아이콘과 같은 모양: 어두운 바탕에 그라데이션 ▶ 와 저장 막대.
+class AppLogo extends StatelessWidget {
+  const AppLogo({super.key, this.size = 38});
+
+  final double size;
+
+  static const _glow = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [Color(0xFF5EE7FF), Color(0xFF7B6BFF), Color(0xFFFF5FA8)],
+  );
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(size * .28),
+      gradient: const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFF262A39), Color(0xFF0B0C11)],
+      ),
+      border: Border.all(color: Palette.line, width: .5),
+    ),
+    child: ShaderMask(
+      shaderCallback: _glow.createShader,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.play_arrow_rounded, size: size * .62, color: Colors.white),
+          Container(
+            width: size * .4,
+            height: size * .08,
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(size)),
+          ),
+        ],
       ),
     ),
   );

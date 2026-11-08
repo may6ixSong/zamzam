@@ -1,32 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 지구본(인터넷) + 다운로드 화살표. 108dp 캔버스, 가운데 66dp 안전 영역 안에 그린다. -->
+<!-- 재생(▶) + 저장 막대. 108dp 캔버스, 가운데 66dp 안전 영역 안에 그린다. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:pathData="M29,48 a19,19 0 1,0 38,0 a19,19 0 1,0 -38,0"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4" />
-    <path
-        android:pathData="M40,48 a8,19 0 1,0 16,0 a8,19 0 1,0 -16,0"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="3.2" />
-    <path
-        android:pathData="M29.5,42 H66.5 M29.5,54 H66.5"
-        android:strokeColor="#FFFFFF"
-        android:strokeLineCap="round"
-        android:strokeWidth="3.2" />
-    <path
-        android:fillColor="#FFC93C"
-        android:pathData="M52.5,66 a13.5,13.5 0 1,0 27,0 a13.5,13.5 0 1,0 -27,0"
-        android:strokeColor="#7B63FF"
-        android:strokeWidth="3" />
-    <path
-        android:pathData="M66,58.5 V72 M60.5,67 L66,72.5 L71.5,67"
-        android:strokeColor="#1B1E27"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:strokeWidth="3.4" />
+    <path android:pathData="M42,33.5 Q42,28.6 46.3,31 L69.6,44.5 Q73.9,47 69.6,49.5 L46.3,63 Q42,65.4 42,60.5 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="42"
+                android:startY="29.5"
+                android:endX="73.9"
+                android:endY="64.5">
+                <item android:offset="0" android:color="#5EE7FF" />
+                <item android:offset="0.5" android:color="#7B6BFF" />
+                <item android:offset="1" android:color="#FF5FA8" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:pathData="M42,72 H66 A3,3 0 0 1 66,78 H42 A3,3 0 0 1 42,72 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="39"
+                android:startY="72"
+                android:endX="69"
+                android:endY="78">
+                <item android:offset="0" android:color="#5EE7FF" />
+                <item android:offset="0.5" android:color="#7B6BFF" />
+                <item android:offset="1" android:color="#FF5FA8" />
+            </gradient>
+        </aapt:attr>
+    </path>
 </vector>
