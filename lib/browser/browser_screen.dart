@@ -140,8 +140,41 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
     showToast('즐겨찾기 ${urls.length}개를 탭으로 열었어요');
   }
 
+  /// 주소창 ☆: 지금 페이지를 바로 즐겨찾기에 넣거나 뺀다.
+  void _toggleFavorite() {
+    final page = _tab.currentPage;
+    if (page == null) return;
+    if (_data.isBookmarked(page.url)) {
+      _data.removeBookmark(page.url);
+      showToast(
+        '즐겨찾기에서 뺐어요',
+        action: SnackBarAction(label: '되돌리기', onPressed: () => _data.addBookmark(page.url, page.title)),
+      );
+      return;
+    }
+    final name = page.title.trim().isEmpty ? displayUrl(page.url).split('/').first : page.title.trim();
+    _data.addBookmark(page.url, name);
+    showToast(
+      '즐겨찾기에 추가했어요 · 새 탭 화면에 보여요',
+      action: SnackBarAction(
+        label: '이름 수정',
+        onPressed: () async {
+          final ctx = navigatorKey.currentContext;
+          if (ctx == null) return;
+          final current = _data.bookmarks.where((b) => b.url == page.url).firstOrNull;
+          if (current == null) return;
+          final r = await showFavoriteEditor(ctx, initial: current);
+          if (r != null) _data.updateBookmark(page.url, r.$1, r.$2);
+        },
+      ),
+    );
+  }
+
   Future<void> _manageFavorites() async {
-    final url = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const FavoritesScreen()));
+    final url = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => FavoritesScreen(current: _tab.currentPage)),
+    );
     if (url != null && mounted) _tab.load(url);
   }
 
@@ -378,8 +411,7 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
         _newTab();
         _startEdit();
       case 'bookmark':
-        _data.toggleBookmark(t.url, t.title);
-        showToast(_data.isBookmarked(t.url) ? '즐겨찾기에 추가했어요 · 새 탭 화면에 보여요' : '즐겨찾기에서 뺐어요');
+        _toggleFavorite();
       case 'share':
         SharePlus.instance.share(ShareParams(uri: Uri.tryParse(t.url), subject: t.title));
       case 'reload':
@@ -504,6 +536,7 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
                       bookmarked: !t.isStartPage && _data.isBookmarked(t.url),
                       onSubmit: _go,
                       onStartEdit: _startEdit,
+                      onToggleFavorite: _toggleFavorite,
                       onCancel: _endEdit,
                     ),
                     SizedBox(
@@ -532,6 +565,7 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
                                 onOpenInNewTab: (u) => _newTab(url: u),
                                 onOpenAll: _openAll,
                                 onManage: _manageFavorites,
+                                currentPage: t.currentPage,
                               ),
                             ),
                           if (_editing)
@@ -576,6 +610,7 @@ class _AddressBar extends StatelessWidget {
     required this.focus,
     required this.editing,
     required this.bookmarked,
+    required this.onToggleFavorite,
     required this.onSubmit,
     required this.onStartEdit,
     required this.onCancel,
@@ -588,6 +623,7 @@ class _AddressBar extends StatelessWidget {
   final FocusNode focus;
   final bool editing;
   final bool bookmarked;
+  final VoidCallback onToggleFavorite;
   final ValueChanged<String> onSubmit;
 
   @override
@@ -654,14 +690,24 @@ class _AddressBar extends StatelessWidget {
                         icon: const Icon(Icons.cancel_rounded, size: 18, color: Palette.muted),
                         onPressed: controller.clear,
                       )
-                    else if (!editing && !tab.isStartPage)
+                    else if (!editing && !tab.isStartPage) ...[
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: bookmarked ? '즐겨찾기에서 빼기' : '즐겨찾기에 추가',
+                        icon: Icon(
+                          bookmarked ? Icons.star_rounded : Icons.star_outline_rounded,
+                          size: 22,
+                          color: bookmarked ? Palette.trim : Palette.muted,
+                        ),
+                        onPressed: onToggleFavorite,
+                      ),
                       IconButton(
                         visualDensity: VisualDensity.compact,
                         tooltip: tab.loading ? '중지' : '새로고침',
                         icon: Icon(tab.loading ? Icons.close_rounded : Icons.refresh_rounded, size: 20),
                         onPressed: tab.loading ? tab.stop : tab.reload,
-                      )
-                    else
+                      ),
+                    ] else
                       const SizedBox(width: 12),
                   ],
                 ),

@@ -217,9 +217,22 @@ class BrowserTab extends ChangeNotifier {
   /// 시작 페이지를 띄우기 전에 보던 주소. 뒤로 가기로 돌아간다.
   String? behindStart;
 
+  /// [behindStart] 페이지의 제목.
+  String behindTitle = '';
+
+  /// 지금 보고 있는(시작 페이지면 그 뒤에 보던) 페이지. 없으면 null.
+  PageEntry? get currentPage {
+    final u = isStartPage ? behindStart : url;
+    if (u == null || u.isEmpty || u == 'about:blank') return null;
+    return PageEntry(url: u, title: isStartPage ? behindTitle : title, time: DateTime.now());
+  }
+
   /// 시작 페이지로 돌아간다(웹 기록은 남겨 둔다).
   void showStartPage() {
-    if (url.isNotEmpty) behindStart = url;
+    if (url.isNotEmpty) {
+      behindStart = url;
+      behindTitle = title;
+    }
     controller
         .runJavaScript("document.querySelectorAll('video,audio').forEach(function(m){m.pause();});")
         .catchError((_) {});

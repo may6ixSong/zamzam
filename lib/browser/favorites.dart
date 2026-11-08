@@ -54,9 +54,12 @@ class FavoriteIcon extends StatelessWidget {
 }
 
 /// 즐겨찾기 추가·수정 창. 저장하면 (주소, 이름)을 돌려준다.
-Future<(String, String)?> showFavoriteEditor(BuildContext context, {PageEntry? initial}) {
-  final url = TextEditingController(text: initial?.url ?? '');
-  final title = TextEditingController(text: initial?.title ?? '');
+///
+/// 추가할 때 [current](지금 보던 페이지)를 주면 처음부터 그 페이지로 채워 두어 바로 저장할 수 있다.
+Future<(String, String)?> showFavoriteEditor(BuildContext context, {PageEntry? initial, PageEntry? current}) {
+  final fill = initial ?? (current != null && !BrowserData.instance.isBookmarked(current.url) ? current : null);
+  final url = TextEditingController(text: fill?.url ?? '');
+  final title = TextEditingController(text: fill?.title ?? '');
   return showDialog<(String, String)>(
     context: context,
     builder: (c) {
@@ -71,7 +74,13 @@ Future<(String, String)?> showFavoriteEditor(BuildContext context, {PageEntry? i
         title: Text(initial == null ? '즐겨찾기 추가' : '즐겨찾기 수정'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (initial == null && fill != null)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 4),
+                child: Text('지금 보던 페이지를 채워 뒀어요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+              ),
             TextField(
               controller: title,
               autofocus: initial == null,
@@ -101,7 +110,10 @@ Future<(String, String)?> showFavoriteEditor(BuildContext context, {PageEntry? i
 
 /// 즐겨찾기 관리: 끌어서 순서 바꾸기, 수정, 삭제, 추가. 누르면 그 주소를 돌려준다.
 class FavoritesScreen extends StatelessWidget {
-  const FavoritesScreen({super.key});
+  const FavoritesScreen({super.key, this.current});
+
+  /// 지금 보던 페이지(추가할 때 바로 채운다).
+  final PageEntry? current;
 
   @override
   Widget build(BuildContext context) {
@@ -114,7 +126,7 @@ class FavoritesScreen extends StatelessWidget {
           appBar: AppBar(title: const Text('즐겨찾기')),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: () async {
-              final r = await showFavoriteEditor(context);
+              final r = await showFavoriteEditor(context, current: current);
               if (r != null) data.addBookmark(r.$1, r.$2);
             },
             icon: const Icon(Icons.add_rounded),

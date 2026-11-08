@@ -15,7 +15,11 @@ class StartPage extends StatelessWidget {
     required this.onOpenInNewTab,
     required this.onOpenAll,
     required this.onManage,
+    this.currentPage,
   });
+
+  /// 새 탭 화면을 띄우기 전에 보던 페이지('+'로 추가할 때 바로 채운다).
+  final PageEntry? currentPage;
 
   /// 이 탭에서 연다.
   final ValueChanged<String> onOpen;
@@ -160,7 +164,7 @@ class StartPage extends StatelessWidget {
                         ),
                         label: '추가',
                         onTap: () async {
-                          final r = await showFavoriteEditor(context);
+                          final r = await showFavoriteEditor(context, current: currentPage);
                           if (r != null) data.addBookmark(r.$1, r.$2);
                         },
                       ),
