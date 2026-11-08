@@ -62,7 +62,8 @@ object Mp4Index {
         val head = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN)
         while (pos + 8 <= size) {
             head.clear()
-            head.limit(16.coerceAtMost((size - pos).toInt().coerceAtLeast(8)))
+            // 2GB 가 넘는 파일에서 Int 로 바꾸면 넘쳐 음수가 되므로 Long 으로 비교한다.
+            head.limit(minOf(16L, size - pos).toInt())
             readFully(ch, head, pos)
             head.flip()
             var boxSize = head.int.toLong() and 0xffffffffL

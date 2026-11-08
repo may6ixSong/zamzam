@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -34,6 +35,9 @@ class _TrimScreenState extends State<TrimScreen> {
   int _playhead = 0;
   bool _loop = true;
   bool _loading = false;
+
+  /// 불러오는 중 지금 하는 일(멈춘 것처럼 보이지 않게, 어디서 막혔는지 알 수 있게).
+  String _loadingStep = '';
   bool _dragging = false;
 
   bool _seeking = false;
@@ -78,20 +82,25 @@ class _TrimScreenState extends State<TrimScreen> {
   }
 
   Future<void> _load(String uri) async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _loadingStep = '영상 정보를 읽는 중…';
+    });
     // 영상 정보 읽기와 재생기 준비를 동시에 해서 화면이 빨리 뜨게 한다.
     final ctrl = createController(uri);
     final ready = ctrl.initialize();
+    void dropPlayer() => ready.catchError((_) {}).whenComplete(ctrl.dispose);
     try {
-      final info = await _engine.probe(uri);
+      final info = await _engine.probe(uri).timeout(const Duration(seconds: 45));
       if (!canTrim(info.durationUs)) {
-        ready.catchError((_) {}).whenComplete(ctrl.dispose);
+        dropPlayer();
         _toast('1초보다 짧은 영상은 자를 수 없어요');
         setState(() => _loading = false);
         return;
       }
+      if (mounted) setState(() => _loadingStep = '미리보기를 준비하는 중…');
       final old = _ctrl;
-      await ready;
+      await ready.timeout(const Duration(seconds: 30));
       ctrl.addListener(_onTick);
       await old?.dispose();
       if (!mounted) {
@@ -109,10 +118,26 @@ class _TrimScreenState extends State<TrimScreen> {
       });
       final thumbs = await _engine.thumbnails(info.uri, count: 12, height: 120);
       if (mounted && _info == info) setState(() => _thumbs = thumbs);
+    } on TimeoutException {
+      dropPlayer();
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _toast(
+        _loadingStep.startsWith('미리보기')
+            ? '이 영상의 미리보기를 준비하지 못했어요(재생기가 응답하지 않음)'
+            : '영상 정보를 읽는 데 너무 오래 걸려요. 다른 영상으로 해 보세요',
+      );
     } on PlatformException catch (e) {
-      ready.catchError((_) {}).whenComplete(ctrl.dispose);
+      dropPlayer();
+      if (!mounted) return;
       setState(() => _loading = false);
       _toast('영상을 열지 못했어요: ${e.message}');
+    } catch (e) {
+      // 어떤 오류든 로딩 화면에 갇히지 않게 한다.
+      dropPlayer();
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _toast('영상을 열지 못했어요: $e');
     }
   }
 
@@ -345,7 +370,16 @@ class _TrimScreenState extends State<TrimScreen> {
         body: SafeArea(
           top: false,
           child: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text(_loadingStep, style: const TextStyle(color: Palette.muted)),
+                    ],
+                  ),
+                )
               : _info == null
               ? EmptyPrompt(
                   icon: Icons.content_cut_rounded,

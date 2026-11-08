@@ -111,13 +111,14 @@ class _MergeScreenState extends State<MergeScreen> {
     var failed = 0;
     for (final uri in uris) {
       try {
-        final clip = _Clip(await _engine.probe(uri));
+        final clip = _Clip(await _engine.probe(uri).timeout(const Duration(seconds: 45)));
         if (!mounted) return;
         setState(() => _clips.add(clip));
         _engine.thumbnails(uri, count: 1, height: 120).then((t) {
           if (mounted && t.isNotEmpty) setState(() => clip.thumb = t.first);
         });
-      } on PlatformException {
+      } catch (_) {
+        // 시간 초과 등 어떤 오류든 그 영상만 건너뛰고 계속한다.
         failed++;
       }
     }
