@@ -97,71 +97,76 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       context: context,
       backgroundColor: Palette.s1,
       showDragHandle: true,
+      // 항목이 많아 화면 아래로 잘리지 않게 스크롤되게 한다.
+      isScrollControlled: true,
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * .85),
       builder: (c) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text(
-                item.name,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700),
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.content_cut_rounded, color: Palette.accent),
-              title: const Text('자르기'),
-              onTap: () => Navigator.pop(c, 'trim'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.view_week_outlined, color: Palette.violet),
-              title: const Text('합치기'),
-              subtitle: const Text('이 영상부터 이어 붙일 영상을 골라요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
-              onTap: () => Navigator.pop(c, 'merge'),
-            ),
-            if (defaultTargetPlatform == TargetPlatform.android)
-              ListTile(
-                leading: const Icon(Icons.compress_rounded, color: Palette.ok),
-                title: const Text('용량 줄이기'),
-                subtitle: const Text('해상도를 낮춰 새 파일로 저장해요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
-                onTap: () => Navigator.pop(c, 'compress'),
-              ),
-            ListTile(
-              leading: const Icon(Icons.play_circle_outline_rounded),
-              title: const Text('갤러리에서 보기'),
-              onTap: () => Navigator.pop(c, 'open'),
-            ),
-            if (item.pageUrl.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.link_rounded),
-                title: const Text('받은 페이지 주소 복사'),
-                subtitle: Text(
-                  displayUrl(item.pageUrl),
-                  maxLines: 1,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Text(
+                  item.name,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, color: Palette.muted),
+                  style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700),
                 ),
-                onTap: () => Navigator.pop(c, 'copy'),
               ),
-            if (defaultTargetPlatform == TargetPlatform.android)
               ListTile(
-                leading: const Icon(Icons.bug_report_outlined),
-                title: const Text('문제 진단'),
-                subtitle: const Text(
-                  '자르기가 안 될 때: 원인 정보를 모아 복사해요',
-                  style: TextStyle(fontSize: 12.5, color: Palette.muted),
-                ),
-                onTap: () => Navigator.pop(c, 'diagnose'),
+                leading: const Icon(Icons.content_cut_rounded, color: Palette.accent),
+                title: const Text('자르기'),
+                onTap: () => Navigator.pop(c, 'trim'),
               ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline_rounded, color: Palette.bad),
-              title: const Text('목록에서 지우기'),
-              subtitle: const Text('갤러리의 영상은 남아요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
-              onTap: () => Navigator.pop(c, 'remove'),
-            ),
-          ],
+              ListTile(
+                leading: const Icon(Icons.view_week_outlined, color: Palette.violet),
+                title: const Text('합치기'),
+                subtitle: const Text('이 영상부터 이어 붙일 영상을 골라요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+                onTap: () => Navigator.pop(c, 'merge'),
+              ),
+              if (defaultTargetPlatform == TargetPlatform.android)
+                ListTile(
+                  leading: const Icon(Icons.compress_rounded, color: Palette.ok),
+                  title: const Text('용량 줄이기'),
+                  subtitle: const Text('해상도를 낮춰 새 파일로 저장해요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+                  onTap: () => Navigator.pop(c, 'compress'),
+                ),
+              ListTile(
+                leading: const Icon(Icons.play_circle_outline_rounded),
+                title: const Text('갤러리에서 보기'),
+                onTap: () => Navigator.pop(c, 'open'),
+              ),
+              if (item.pageUrl.isNotEmpty)
+                ListTile(
+                  leading: const Icon(Icons.link_rounded),
+                  title: const Text('받은 페이지 주소 복사'),
+                  subtitle: Text(
+                    displayUrl(item.pageUrl),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Palette.muted),
+                  ),
+                  onTap: () => Navigator.pop(c, 'copy'),
+                ),
+              if (defaultTargetPlatform == TargetPlatform.android)
+                ListTile(
+                  leading: const Icon(Icons.bug_report_outlined),
+                  title: const Text('문제 진단'),
+                  subtitle: const Text(
+                    '자르기가 안 될 때: 원인 정보를 모아 복사해요',
+                    style: TextStyle(fontSize: 12.5, color: Palette.muted),
+                  ),
+                  onTap: () => Navigator.pop(c, 'diagnose'),
+                ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded, color: Palette.bad),
+                title: const Text('목록에서 지우기'),
+                subtitle: const Text('갤러리의 영상은 남아요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+                onTap: () => Navigator.pop(c, 'remove'),
+              ),
+            ],
+          ),
         ),
       ),
     );

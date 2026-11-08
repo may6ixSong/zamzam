@@ -97,7 +97,8 @@ class Downloads extends ChangeNotifier {
     : _file = file ?? AppJsonFile('downloads.json'),
       _engineOverride = engine;
 
-  static final Downloads instance = Downloads();
+  /// 앱 전체에서 쓰는 하나. 테스트에서는 메모리 저장소로 바꿔 끼운다.
+  static Downloads instance = Downloads();
 
   final JsonFile _file;
   final MediaEngine? _engineOverride;
