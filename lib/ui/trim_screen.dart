@@ -423,8 +423,13 @@ class _TrimScreenState extends State<TrimScreen> {
         appBar: AppBar(
           title: const Text('동영상 자르기'),
           actions: [
-            if (_sourceUri != null && !_loading)
-              IconButton(tooltip: '문제 진단', onPressed: _diagnose, icon: const Icon(Icons.bug_report_outlined)),
+            // 영상을 고른 뒤에는 로딩 중에도 항상 보인다(로딩에서 멈출 때가 진단이 가장 필요할 때).
+            if (_sourceUri != null)
+              TextButton.icon(
+                onPressed: _diagnose,
+                icon: const Icon(Icons.bug_report_outlined, size: 20),
+                label: const Text('문제 진단'),
+              ),
             if (_info != null)
               Padding(
                 padding: const EdgeInsets.only(right: 10),
@@ -449,6 +454,14 @@ class _TrimScreenState extends State<TrimScreen> {
                       const CircularProgressIndicator(),
                       const SizedBox(height: 16),
                       Text(_loadingStep, style: const TextStyle(color: Palette.muted)),
+                      if (_sourceUri != null) ...[
+                        const SizedBox(height: 28),
+                        OutlinedButton.icon(
+                          onPressed: _diagnose,
+                          icon: const Icon(Icons.bug_report_outlined, size: 18),
+                          label: const Text('오래 걸리면 문제 진단'),
+                        ),
+                      ],
                     ],
                   ),
                 )

@@ -30,6 +30,6 @@ void main() {
     // 창을 닫아도 위쪽 진단 버튼이 남아 있다.
     await tester.tap(find.text('닫기'));
     await tester.pumpAndSettle();
-    expect(find.byTooltip('문제 진단'), findsOneWidget);
+    expect(find.text('문제 진단'), findsOneWidget);
   });
 }
