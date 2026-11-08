@@ -143,6 +143,11 @@ class MediaEngine(
                 val auth = webAuth(call, url)
                 background(probeExecutor, result) { inspectVideo(url, auth) }
             }
+            "repair" -> {
+                cancelled.set(false)
+                val uri = call.uri("uri")
+                background(exportExecutor, result) { repair(uri) }
+            }
             "compress" -> {
                 cancelled.set(false)
                 val uri = call.uri("uri")
@@ -791,6 +796,8 @@ class MediaEngine(
             throw CancelledException()
         } catch (e: Transcoder.Cancelled) {
             throw CancelledException()
+        } catch (e: Remuxer.Cancelled) {
+            throw CancelledException()
         } finally {
             work.deleteRecursively()
         }
@@ -867,6 +874,32 @@ class MediaEngine(
             discard(out)
             throw e
         }
+    }
+
+    /**
+     * 자르기가 안 되는 영상(키프레임 정보가 깨진 파일 등)을 앱 임시 폴더에 고친 사본으로 만든다.
+     * 갤러리의 원본은 건드리지 않는다. 진행률은 자르기·합치기와 같은 채널로 보낸다.
+     */
+    private fun repair(uri: Uri): String {
+        val dir = java.io.File(ctx.cacheDir, "repaired").apply { mkdirs() }
+        // 몇 시간 지난 사본은 지운다(용량 절약). 합치기에서 여러 개를 함께 쓰므로 방금 것은 남긴다.
+        val old = System.currentTimeMillis() - 6 * 3600_000L
+        dir.listFiles()?.filter { it.lastModified() < old }?.forEach { it.delete() }
+        val base = (displayName(uri)?.substringBeforeLast('.') ?: "video").replace(Regex("""[\\/:*?"<>|]"""), "_")
+        val out = java.io.File(dir, "${base}_${System.currentTimeMillis()}.mp4")
+        try {
+            FileOutputStream(out).use { fos ->
+                Remuxer(cancelled) { f -> main.post { channel.invokeMethod("progress", f.coerceIn(0.0, 1.0)) } }
+                    .remux(listOf { openExtractor(uri) }, fos.fd)
+            }
+        } catch (e: Remuxer.Cancelled) {
+            out.delete()
+            throw CancelledException()
+        } catch (e: Throwable) {
+            out.delete()
+            throw e
+        }
+        return Uri.fromFile(out).toString()
     }
 
     /** 갤러리의 영상을 [shortSide] 해상도로 낮춰 새 파일로 저장한다(자르기·합치기처럼 진행률을 보낸다). */

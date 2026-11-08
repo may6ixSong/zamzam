@@ -82,13 +82,26 @@ class _TrimScreenState extends State<TrimScreen> {
 
   /// 이전 버전과 같은 순서로 연다: 영상 정보 → 재생기. 시간 제한은 두지 않는다
   /// (긴 영상은 정보를 읽는 데 오래 걸리지만 기다리면 열린다).
-  Future<void> _load(String uri) async {
+  ///
+  /// 키프레임 정보가 깨진 파일(브라우저로 받은 스트리밍 영상 등)이거나 열리지 않으면,
+  /// 고친 사본을 만들어 그걸로 다시 연다([repaired]면 이미 고친 사본이라 다시 고치지 않는다).
+  Future<void> _load(String uri, {bool repaired = false}) async {
     setState(() {
       _loading = true;
       _loadingStep = '영상 정보를 읽는 중… (긴 영상은 오래 걸려요)';
     });
+    VideoInfo info;
     try {
-      final info = await _engine.probe(uri);
+      info = await _engine.probe(uri);
+    } catch (e) {
+      if (!repaired) return _repairAndLoad(uri);
+      _failLoad('영상을 열지 못했어요: ${e is PlatformException ? e.message : e}');
+      return;
+    }
+    if (!repaired && needsRepair(keyframesUs: info.keyframesUs, durationUs: info.durationUs, fps: info.fps)) {
+      return _repairAndLoad(uri);
+    }
+    try {
       if (!canTrim(info.durationUs)) {
         _toast('1초보다 짧은 영상은 자를 수 없어요');
         setState(() => _loading = false);
@@ -116,15 +129,36 @@ class _TrimScreenState extends State<TrimScreen> {
       final thumbs = await _engine.thumbnails(info.uri, count: 12, height: 120);
       if (mounted && _info == info) setState(() => _thumbs = thumbs);
     } on PlatformException catch (e) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      _toast('영상을 열지 못했어요: ${e.message}');
+      _failLoad('영상을 열지 못했어요: ${e.message}');
     } catch (e) {
       // 어떤 오류든 로딩 화면에 갇히지 않게 한다.
-      if (!mounted) return;
-      setState(() => _loading = false);
-      _toast('영상을 열지 못했어요: $e');
+      _failLoad('영상을 열지 못했어요: $e');
     }
+  }
+
+  /// 자르기에 맞게 고친 사본을 만들어(원본은 그대로) 그걸로 연다.
+  Future<void> _repairAndLoad(String uri) async {
+    if (!mounted) return;
+    setState(() => _loadingStep = '자르기에 맞게 영상을 정리하는 중…');
+    final sub = _engine.progress.listen((p) {
+      if (mounted) setState(() => _loadingStep = '자르기에 맞게 영상을 정리하는 중… ${(p * 100).round()}%');
+    });
+    String fixed;
+    try {
+      fixed = await _engine.repair(uri);
+    } catch (e) {
+      _failLoad('이 영상은 자를 수 없는 형식이에요: ${e is PlatformException ? e.message : e}');
+      return;
+    } finally {
+      await sub.cancel();
+    }
+    await _load(fixed, repaired: true);
+  }
+
+  void _failLoad(String message) {
+    if (!mounted) return;
+    setState(() => _loading = false);
+    _toast(message);
   }
 
   // ---------------------------------------------------------------- playback
@@ -325,7 +359,7 @@ class _TrimScreenState extends State<TrimScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
+      ..showSnackBar(SnackBar(content: Text(msg), duration: const Duration(seconds: 4)));
   }
 
   // ---------------------------------------------------------------- build

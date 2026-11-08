@@ -111,6 +111,17 @@ class MediaEngine {
       }) ??
       const {};
 
+  /// 자르기가 안 되는 영상을 고친 사본(앱 임시 폴더의 file:// 주소)을 만든다. 원본은 그대로.
+  /// 진행률은 [progress]로 온다.
+  Future<String> repair(String uri) async {
+    try {
+      return (await _channel.invokeMethod<String>('repair', {'uri': uri}))!;
+    } on PlatformException catch (e) {
+      if (e.code == 'CANCELLED') throw ExportCancelled();
+      rethrow;
+    }
+  }
+
   /// 갤러리의 영상을 짧은 변 [shortSide] 해상도로 낮춰 새 파일로 저장한다(Android, 진행률은 [progress]).
   Future<ExportResult> compress(String uri, {required int shortSide}) =>
       _export('compress', {'uri': uri, 'shortSide': shortSide});

@@ -8,8 +8,11 @@ import '../core/time_format.dart';
 import 'theme.dart';
 
 /// 플랫폼별 원본 위치로 플레이어를 만든다(Android content:// URI, iOS 파일 경로).
-VideoPlayerController createController(String uri) =>
-    Platform.isAndroid ? VideoPlayerController.contentUri(Uri.parse(uri)) : VideoPlayerController.file(File(uri));
+VideoPlayerController createController(String uri) {
+  // 고친 사본(file://)은 파일로, 갤러리 영상(content://)은 그대로 연다.
+  if (uri.startsWith('file://')) return VideoPlayerController.file(File(Uri.parse(uri).toFilePath()));
+  return Platform.isAndroid ? VideoPlayerController.contentUri(Uri.parse(uri)) : VideoPlayerController.file(File(uri));
+}
 
 /// 16:9 틀 안에 영상을 맞춰 넣고, 가운데 재생 버튼과 왼쪽 아래 시간 표시를 얹는다.
 class VideoView extends StatelessWidget {

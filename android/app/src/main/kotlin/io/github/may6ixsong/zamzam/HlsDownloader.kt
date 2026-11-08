@@ -1,16 +1,12 @@
 package io.github.may6ixsong.zamzam
 
-import android.media.MediaCodec
 import android.media.MediaExtractor
-import android.media.MediaFormat
-import android.media.MediaMuxer
 import java.io.File
 import java.io.FileDescriptor
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
-import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
@@ -288,80 +284,12 @@ class HlsDownloader(
 
     // ------------------------------------------------------------------ remux
 
-    private class Source(val ex: MediaExtractor, val map: Map<Int, Int>)
-
+    /** 받은 조각 파일들을 MP4 로 옮겨 담는다. 키프레임은 프레임 데이터를 읽어 다시 정한다([Remuxer]). */
     private fun remux(files: List<File>, out: FileDescriptor) {
-        val muxer = MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-        val sources = mutableListOf<Source>()
-        var started = false
         try {
-            var haveVideo = false
-            var haveAudio = false
-            var bufferSize = 2 * 1024 * 1024
-            for (f in files) {
-                val ex = MediaExtractor()
-                ex.setDataSource(f.path)
-                val map = HashMap<Int, Int>()
-                for (i in 0 until ex.trackCount) {
-                    val fmt = ex.getTrackFormat(i)
-                    val mime = fmt.getString(MediaFormat.KEY_MIME) ?: continue
-                    val isVideo = mime.startsWith("video/")
-                    val isAudio = mime.startsWith("audio/")
-                    if ((isVideo && haveVideo) || (isAudio && haveAudio) || (!isVideo && !isAudio)) continue
-                    // 음성 형식을 MP4 에 못 담으면(예: MP3 일부) 영상만이라도 저장한다.
-                    val idx = try {
-                        muxer.addTrack(fmt)
-                    } catch (e: Exception) {
-                        if (isVideo) throw IOException("이 영상 형식은 MP4 로 바꿀 수 없어요 ($mime)")
-                        continue
-                    }
-                    if (fmt.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
-                        bufferSize = maxOf(bufferSize, fmt.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
-                    }
-                    ex.selectTrack(i)
-                    map[i] = idx
-                    if (isVideo) haveVideo = true else haveAudio = true
-                }
-                if (map.isEmpty()) ex.release() else sources += Source(ex, map)
-            }
-            if (!haveVideo) throw IOException("영상 트랙을 찾지 못했어요")
-            muxer.start()
-            started = true
-
-            // 방송용 조각은 시각이 0 이 아닌 곳에서 시작하므로 가장 이른 시각을 0 으로 맞춘다.
-            val base = sources.mapNotNull { s -> s.ex.sampleTime.takeIf { it >= 0 } }.minOrNull() ?: 0L
-            var buffer = ByteBuffer.allocateDirect(bufferSize)
-            val info = MediaCodec.BufferInfo()
-            var written = 0
-            while (true) {
-                if (cancel.get()) throw CancelledByUser()
-                val src = sources.filter { it.ex.sampleTrackIndex >= 0 }.minByOrNull { it.ex.sampleTime } ?: break
-                val ex = src.ex
-                val track = src.map[ex.sampleTrackIndex]
-                val t = ex.sampleTime
-                if (track != null && t >= base) {
-                    val size = try {
-                        ex.readSampleData(buffer, 0)
-                    } catch (e: IllegalArgumentException) {
-                        buffer = ByteBuffer.allocateDirect(buffer.capacity() * 2)
-                        continue
-                    }
-                    if (size > 0) {
-                        val sync = (ex.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) != 0
-                        info.set(0, size, t - base, if (sync) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
-                        muxer.writeSampleData(track, buffer, info)
-                        written++
-                    }
-                }
-                ex.advance()
-            }
-            if (written == 0) throw IOException("영상 프레임을 읽지 못했어요")
-            started = false
-            muxer.stop()
-        } finally {
-            if (started) runCatching { muxer.stop() }
-            runCatching { muxer.release() }
-            sources.forEach { runCatching { it.ex.release() } }
+            Remuxer(cancel).remux(files.map { f -> { MediaExtractor().apply { setDataSource(f.path) } } }, out)
+        } catch (e: Remuxer.Cancelled) {
+            throw CancelledByUser()
         }
     }
 

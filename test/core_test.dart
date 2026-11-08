@@ -197,4 +197,21 @@ void main() {
     expect(formatBytes(382 * 1024 * 1024), '382 MB');
     expect(formatBytes(2 * 1024 * 1024 * 1024), '2.00 GB');
   });
+
+  group('자르기용으로 고쳐야 하는 파일', () {
+    test('키프레임이 하나도 없으면 고친다', () {
+      expect(needsRepair(keyframesUs: const [], durationUs: 10000000, fps: 30), isTrue);
+    });
+    test('거의 모든 프레임이 키프레임으로 적혀 있으면 고친다(스트리밍을 옮긴 파일)', () {
+      final all = List.generate(300, (i) => i * 33333);
+      expect(needsRepair(keyframesUs: all, durationUs: 10000000, fps: 30), isTrue);
+    });
+    test('보통 영상(1~2초마다 키프레임)은 그대로 쓴다', () {
+      final normal = List.generate(10, (i) => i * 1000000);
+      expect(needsRepair(keyframesUs: normal, durationUs: 10000000, fps: 30), isFalse);
+    });
+    test('아주 짧은 영상은 판단하지 않는다', () {
+      expect(needsRepair(keyframesUs: const [0, 33333], durationUs: 500000, fps: 30), isFalse);
+    });
+  });
 }

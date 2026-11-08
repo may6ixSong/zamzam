@@ -5,6 +5,7 @@ import 'package:video_player/video_player.dart';
 import '../core/downloads.dart';
 import '../core/media_engine.dart';
 import '../core/time_format.dart';
+import '../core/trim_range.dart';
 import '../core/video_info.dart';
 import 'downloads_screen.dart';
 import 'export_flow.dart';
@@ -111,10 +112,15 @@ class _MergeScreenState extends State<MergeScreen> {
     var failed = 0;
     for (final uri in uris) {
       try {
-        final clip = _Clip(await _engine.probe(uri));
+        var info = await _engine.probe(uri);
+        // 키프레임 정보가 깨진 파일(브라우저로 받은 스트리밍 영상 등)은 고친 사본으로 바꿔 쓴다.
+        if (needsRepair(keyframesUs: info.keyframesUs, durationUs: info.durationUs, fps: info.fps)) {
+          info = await _engine.probe(await _engine.repair(uri));
+        }
+        final clip = _Clip(info);
         if (!mounted) return;
         setState(() => _clips.add(clip));
-        _engine.thumbnails(uri, count: 1, height: 120).then((t) {
+        _engine.thumbnails(info.uri, count: 1, height: 120).then((t) {
           if (mounted && t.isNotEmpty) setState(() => clip.thumb = t.first);
         });
       } catch (_) {
