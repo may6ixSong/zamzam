@@ -17,6 +17,7 @@ import 'favorites.dart';
 import 'page_lists.dart';
 import 'start_page.dart';
 import 'video_sheet.dart';
+import 'zoom_bar.dart';
 
 /// 앱의 첫 화면: 인터넷 브라우저.
 class BrowserScreen extends StatefulWidget {
@@ -35,6 +36,9 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
   final _address = TextEditingController();
   final _addressFocus = FocusNode();
   bool _editing = false;
+
+  /// 화면 배율 조절 줄을 보이는지.
+  bool _zoomOpen = false;
 
   /// 전체 화면 동영상(Android).
   Widget? _fullscreen;
@@ -538,7 +542,19 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
                       onStartEdit: _startEdit,
                       onToggleFavorite: _toggleFavorite,
                       onCancel: _endEdit,
+                      zoomOpen: _zoomOpen,
+                      onToggleZoom: () => setState(() => _zoomOpen = !_zoomOpen),
                     ),
+                    // 돋보기 버튼을 눌렀을 때만 보이는 화면 배율 조절 줄.
+                    if (_zoomOpen && !_editing && !t.isStartPage)
+                      ZoomBar(
+                        zoom: t.zoom,
+                        min: BrowserTab.minZoom,
+                        max: BrowserTab.maxZoom,
+                        onChanged: t.setZoom,
+                        onFit: t.fitZoom,
+                        onClose: () => setState(() => _zoomOpen = false),
+                      ),
                     SizedBox(
                       height: 2.5,
                       child: t.loading && !t.isStartPage
@@ -614,8 +630,12 @@ class _AddressBar extends StatelessWidget {
     required this.onSubmit,
     required this.onStartEdit,
     required this.onCancel,
+    required this.zoomOpen,
+    required this.onToggleZoom,
   });
 
+  final bool zoomOpen;
+  final VoidCallback onToggleZoom;
   final VoidCallback onStartEdit;
   final VoidCallback onCancel;
   final BrowserTab tab;
@@ -714,6 +734,15 @@ class _AddressBar extends StatelessWidget {
               ),
             ),
             if (editing) TextButton(onPressed: onCancel, child: const Text('취소')),
+            // 화면 배율 조절 열기/닫기. 100%가 아니면 강조해서 지금 확대·축소 중임을 보여 준다.
+            if (!editing && !tab.isStartPage)
+              IconButton(
+                tooltip: '화면 배율',
+                onPressed: onToggleZoom,
+                isSelected: zoomOpen,
+                style: IconButton.styleFrom(backgroundColor: zoomOpen ? Palette.s3 : null),
+                icon: Icon(Icons.zoom_in_rounded, color: zoomOpen || tab.zoom != 1.0 ? Palette.accent : Palette.muted),
+              ),
           ],
         ),
       ),

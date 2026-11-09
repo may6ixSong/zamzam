@@ -134,6 +134,8 @@ class BrowserTab extends ChangeNotifier {
             progress = 100;
             url = u;
             await _inject();
+            // 이 탭에서 정한 화면 배율을 새 페이지에도 적용한다.
+            if (zoom != 1.0) await _applyZoom();
             final t = await c.getTitle() ?? '';
             title = t;
             data.updateTitle(u, t);
@@ -212,6 +214,30 @@ class BrowserTab extends ChangeNotifier {
     final uri = Uri.tryParse(target);
     if (uri == null) return;
     await controller.loadRequest(uri);
+  }
+
+  /// 화면 배율(1.0 = 100%). 탭마다 기억해 페이지를 옮겨도 유지한다.
+  double zoom = 1.0;
+
+  static const minZoom = 0.5;
+  static const maxZoom = 3.0;
+
+  /// 화면 배율을 바꾼다. 페이지 전체(글자·그림·iframe)를 CSS zoom 으로 키우거나 줄인다.
+  Future<void> setZoom(double value) async {
+    zoom = (value.clamp(minZoom, maxZoom) * 100).roundToDouble() / 100;
+    _notify();
+    await _applyZoom();
+  }
+
+  /// 원래 크기(100%)로.
+  Future<void> fitZoom() => setZoom(1.0);
+
+  Future<void> _applyZoom() async {
+    if (isStartPage) return;
+    final css = zoom == 1.0 ? '' : zoom.toString();
+    try {
+      await controller.runJavaScript("document.documentElement.style.zoom = '$css';");
+    } catch (_) {}
   }
 
   /// 시작 페이지를 띄우기 전에 보던 주소. 뒤로 가기로 돌아간다.
