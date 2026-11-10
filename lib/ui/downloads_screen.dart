@@ -11,7 +11,6 @@ import '../core/time_format.dart';
 import '../core/video_info.dart';
 import '../core/web_address.dart';
 import 'export_flow.dart';
-import 'diagnosis.dart';
 import 'merge_screen.dart';
 import 'theme.dart';
 import 'trim_screen.dart';
@@ -158,16 +157,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                   ),
                   onTap: () => Navigator.pop(c, 'copy'),
                 ),
-              if (defaultTargetPlatform == TargetPlatform.android)
-                ListTile(
-                  leading: const Icon(Icons.bug_report_outlined),
-                  title: const Text('문제 진단'),
-                  subtitle: const Text(
-                    '자르기가 안 될 때: 원인 정보를 모아 복사해요',
-                    style: TextStyle(fontSize: 12.5, color: Palette.muted),
-                  ),
-                  onTap: () => Navigator.pop(c, 'diagnose'),
-                ),
               ListTile(
                 leading: const Icon(Icons.delete_outline_rounded, color: Palette.bad),
                 title: const Text('목록에서 지우기'),
@@ -197,8 +186,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         await _fixAudio(item);
       case 'open':
         MediaEngine.instance.openInGallery(item.uri).catchError((_) => _toast('열 수 있는 앱이 없어요'));
-      case 'diagnose':
-        await _diagnose(item);
       case 'copy':
         Clipboard.setData(ClipboardData(text: item.pageUrl));
         _toast('주소를 복사했어요');
@@ -326,8 +313,6 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       ),
     );
   }
-
-  Future<void> _diagnose(DownloadItem item) => runDiagnosis(context, uris: [item.uri], note: '출처: ${item.sourceUrl}');
 
   void _toast(String msg) {
     if (!mounted) return;

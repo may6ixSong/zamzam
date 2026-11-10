@@ -4,13 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
-import 'package:zamzam/core/diag_log.dart';
 import 'package:zamzam/core/native_player.dart';
 import 'package:zamzam/ui/trim_screen.dart';
 import 'package:zamzam/ui/video_view.dart';
 
 void main() {
-  testWidgets('영상이 안 열리면 이유와 함께 "문제 진단"을 띄우고, 위쪽 버튼으로도 진단할 수 있다', (tester) async {
+  testWidgets('영상이 안 열리면 고친 사본을 시도하고, 그래도 안 되면 이유를 보여 준다', (tester) async {
     const channel = MethodChannel('zamzam/media');
     final calls = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
@@ -20,8 +19,6 @@ void main() {
           throw PlatformException(code: 'FAILED', message: '테스트 실패');
         case 'repair':
           throw PlatformException(code: 'FAILED', message: '고칠 수 없음');
-        case 'diagnose':
-          return '진단 내용';
       }
       return null;
     });
@@ -30,12 +27,10 @@ void main() {
     expect(find.text('영상을 열지 못했어요'), findsOneWidget);
     expect(find.textContaining('고칠 수 없음'), findsOneWidget);
     expect(calls, containsAllInOrder(['probe', 'repair']));
-    expect(DiagLog.lines.any((l) => l.contains('정보 읽기 실패')), isTrue);
-    expect(DiagLog.lines.any((l) => l.contains('사본 만들기 실패')), isTrue);
-    // 창을 닫아도 위쪽 진단 버튼이 남아 있다.
-    await tester.tap(find.text('닫기'));
+    // 확인을 누르면 로딩 화면이 아니라 영상 고르기 화면으로 돌아온다.
+    await tester.tap(find.text('확인'));
     await tester.pumpAndSettle();
-    expect(find.text('진단'), findsOneWidget);
+    expect(find.text('동영상 불러오기'), findsOneWidget);
   });
 
   testWidgets('미리보기 재생기가 안 열려도 자르기 화면은 열린다(정지 화면으로 편집)', (tester) async {
@@ -68,7 +63,6 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(find.textContaining('미리보기를 준비하는 중'), findsNothing);
     expect(find.textContaining('미리보기 재생이 안 돼요'), findsOneWidget);
-    expect(DiagLog.lines.any((l) => l.contains('재생 없이 편집')), isTrue);
   });
 
   testWidgets('미리보기 재생기가 응답 없이 멈춰도 10초 뒤 자르기 화면이 열린다', (tester) async {
@@ -99,7 +93,6 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(find.textContaining('미리보기를 준비하는 중'), findsNothing);
     expect(find.textContaining('미리보기 재생이 안 돼요'), findsOneWidget);
-    expect(DiagLog.lines.any((l) => l.contains('재생기 응답 없음')), isTrue);
   });
   testWidgets('기본 재생기가 멈추면 안드로이드 기본 재생기로 미리보기를 연다', (tester) async {
     final saved = VideoPlayerPlatform.instance;
@@ -164,7 +157,6 @@ void main() {
     expect(find.textContaining('미리보기 재생이 안 돼요'), findsNothing);
     expect(find.byType(Texture), findsOneWidget);
     expect(find.byType(RotatedBox), findsWidgets);
-    expect(DiagLog.lines.any((l) => l.contains('안드로이드 재생기 준비 성공')), isTrue);
   });
 }
 

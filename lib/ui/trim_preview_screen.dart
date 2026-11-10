@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
-import '../core/diag_log.dart';
 import '../core/media_engine.dart';
 import '../core/time_format.dart';
 import '../core/video_info.dart';
@@ -48,7 +47,7 @@ class _TrimPreviewScreenState extends State<TrimPreviewScreen> {
 
   Future<void> _open() async {
     // 기본 재생기 → 안드로이드 기본 재생기 순으로 열고, 둘 다 안 되면 '미리보기 불가'(저장은 된다).
-    final c = await openPreviewPlayer(widget.info.uri, log: DiagLog.add);
+    final c = await openPreviewPlayer(widget.info.uri);
     if (c == null) {
       if (mounted) setState(() => _failed = true);
       return;
