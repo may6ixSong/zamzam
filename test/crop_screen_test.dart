@@ -57,4 +57,43 @@ void main() {
     expect(asked!['name'], 'clip');
     expect(find.text('저장했어요'), findsOneWidget);
   });
+
+  testWidgets('휴지통 버튼은 확인 후 원본 영상만 휴지통으로 옮긴다', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    List<Object?>? trashed;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(const MethodChannel('zamzam/media'), (call) async {
+      switch (call.method) {
+        case 'probe':
+          return {
+            'uri': 'content://media/external/video/media/7',
+            'name': 'clip.mp4',
+            'size': 40000000,
+            'durationUs': 30000000,
+            'width': 1920,
+            'height': 1080,
+            'videoMime': 'video/avc',
+            'fps': 30.0,
+            'keyframesUs': [for (var i = 0; i < 15; i++) i * 2000000],
+            'videoBytes': 38000000,
+            'audioBytes': 2000000,
+          };
+        case 'trash':
+          trashed = call.arguments['uris'] as List<Object?>;
+          return {'moved': true, 'count': 1, 'skipped': 0};
+      }
+      return null;
+    });
+    await tester.pumpWidget(const MaterialApp(home: CropScreen(initialUri: 'content://media/external/video/media/7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('원본 영상을 휴지통으로'));
+    await tester.pumpAndSettle();
+    expect(find.text('원본 영상을 휴지통으로 옮길까요?'), findsOneWidget);
+    await tester.tap(find.text('휴지통으로'));
+    await tester.pumpAndSettle();
+    expect(trashed, ['content://media/external/video/media/7']);
+    expect(find.text('원본 영상을 휴지통으로 옮겼어요'), findsOneWidget);
+    expect(find.byTooltip('원본 영상을 휴지통으로'), findsNothing);
+  });
 }
