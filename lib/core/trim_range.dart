@@ -41,7 +41,14 @@ TrimRange moveEnd(TrimRange r, int value, int durationUs) {
 ///
 /// 키프레임이 하나도 없거나(자를 시작점을 못 찾는다), 거의 모든 프레임이 키프레임으로 적혀 있으면
 /// (스트리밍을 옮긴 파일에서 생긴다. 아무 프레임에서나 잘라 앞부분이 깨진다) 고쳐서 써야 한다.
-bool needsRepair({required List<int> keyframesUs, required int durationUs, required double fps}) {
+bool needsRepair({
+  required List<int> keyframesUs,
+  required int durationUs,
+  required double fps,
+  bool audioAdts = false,
+}) {
+  // 음성이 ADTS 덩어리로 들어 있으면 소리가 나지 않으므로 고쳐서 쓴다.
+  if (audioAdts) return true;
   if (keyframesUs.isEmpty) return true;
   final frames = durationUs / 1e6 * (fps > 0 ? fps : 30);
   return frames >= 30 && keyframesUs.length >= frames * 0.9;

@@ -214,4 +214,10 @@ void main() {
       expect(needsRepair(keyframesUs: const [0, 33333], durationUs: 500000, fps: 30), isFalse);
     });
   });
+
+  test('음성이 ADTS 덩어리로 든 파일은 키프레임이 정상이어도 고친다', () {
+    final normal = List.generate(10, (i) => i * 1000000);
+    expect(needsRepair(keyframesUs: normal, durationUs: 10000000, fps: 30, audioAdts: true), isTrue);
+    expect(needsRepair(keyframesUs: normal, durationUs: 10000000, fps: 30), isFalse);
+  });
 }

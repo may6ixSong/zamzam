@@ -114,7 +114,12 @@ class _MergeScreenState extends State<MergeScreen> {
       try {
         var info = await _engine.probe(uri);
         // 키프레임 정보가 깨진 파일(브라우저로 받은 스트리밍 영상 등)은 고친 사본으로 바꿔 쓴다.
-        if (needsRepair(keyframesUs: info.keyframesUs, durationUs: info.durationUs, fps: info.fps)) {
+        if (needsRepair(
+          keyframesUs: info.keyframesUs,
+          durationUs: info.durationUs,
+          fps: info.fps,
+          audioAdts: info.audioAdts,
+        )) {
           info = await _engine.probe(await _engine.repair(uri));
         }
         final clip = _Clip(info);

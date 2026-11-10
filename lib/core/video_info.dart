@@ -16,6 +16,7 @@ class VideoInfo {
     required this.audioChannels,
     required this.keyframesUs,
     required this.exactCut,
+    this.audioAdts = false,
     this.keyframeBytes = const [],
     this.videoBytes,
     this.audioBytes,
@@ -45,6 +46,9 @@ class VideoInfo {
 
   /// true 면 시작점을 키프레임에 맞추지 않아도 정확히 잘린다(iOS).
   final bool exactCut;
+
+  /// 음성이 ADTS 덩어리로 들어 있어 소리가 나지 않는 파일(브라우저로 받은 스트리밍 영상).
+  final bool audioAdts;
 
   /// [keyframesUs]와 같은 순서로, 각 키프레임 앞까지 쌓인 영상 데이터 바이트 수.
   final List<int> keyframeBytes;
@@ -107,6 +111,7 @@ class VideoInfo {
     audioChannels: (m['channels'] as num?)?.toInt(),
     keyframesUs: [for (final k in (m['keyframesUs'] as List?) ?? const []) (k as num).toInt()],
     exactCut: m['exactCut'] as bool? ?? false,
+    audioAdts: m['audioAdts'] as bool? ?? false,
     keyframeBytes: [for (final k in (m['keyframeBytes'] as List?) ?? const []) (k as num).toInt()],
     videoBytes: (m['videoBytes'] as num?)?.toInt(),
     audioBytes: (m['audioBytes'] as num?)?.toInt(),

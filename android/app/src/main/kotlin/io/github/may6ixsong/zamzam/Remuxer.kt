@@ -112,8 +112,15 @@ class Remuxer(
         try {
             fun ex(source: Int) = extractors.getOrPut(source) { open[source]() }
             val vOut = muxer.addTrack(video.format)
+            // 스트리밍(TS) AAC 는 'ADTS 머리표 + 프레임' 여러 개가 한 덩어리로 온다. MP4 에는 머리표 없는
+            // 프레임 하나씩 넣어야 소리가 난다(그대로 넣으면 소리가 사라진다). 형식도 MP4 용으로 맞춘다.
+            val audioFormat = audio?.let { mp4AudioFormat(open[it.source](), it) }
+            val adts = audioFormat != null && audioFormat.second
+            val audioRate = audioFormat?.first?.let {
+                if (it.containsKey(MediaFormat.KEY_SAMPLE_RATE)) it.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 0
+            } ?: 0
             // 음성 형식을 MP4 에 못 담으면(예: MP3 일부) 영상만이라도 저장한다.
-            val aOut = audio?.let { runCatching { muxer.addTrack(it.format) }.getOrNull() } ?: -1
+            val aOut = audioFormat?.let { runCatching { muxer.addTrack(it.first) }.getOrNull() } ?: -1
             ex(video.source).selectTrack(video.track)
             if (aOut >= 0) ex(audio!!.source).selectTrack(audio.track)
             muxer.start()
@@ -153,7 +160,9 @@ class Remuxer(
                         if (isVideo) videoIndex--
                         continue
                     }
-                    if (size > 0) {
+                    if (size > 0 && isAudio && adts) {
+                        written += writeAdts(muxer, aOut, buffer, size, t - base, audioRate, info)
+                    } else if (size > 0) {
                         info.set(0, size, t - base, if (key) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0)
                         muxer.writeSampleData(if (isVideo) vOut else aOut, buffer, info)
                         written++
@@ -169,6 +178,81 @@ class Remuxer(
             if (started) runCatching { muxer.stop() }
             runCatching { muxer.release() }
             extractors.values.forEach { runCatching { it.release() } }
+        }
+    }
+
+    private var adtsBytes = ByteArray(0)
+    private var lastAudioUs = -1L
+    private var frameBuf: ByteBuffer = ByteBuffer.allocateDirect(8192)
+
+    /**
+     * ADTS 덩어리를 프레임 하나씩(머리표 제외) 쓴다. 프레임마다 1024 샘플씩 시각을 늘린다.
+     * 덩어리가 ADTS 로 꼭 맞게 나뉘지 않으면 그대로 쓴다. 쓴 샘플 수를 돌려준다.
+     */
+    private fun writeAdts(
+        muxer: MediaMuxer,
+        track: Int,
+        buffer: ByteBuffer,
+        size: Int,
+        timeUs: Long,
+        sampleRate: Int,
+        info: MediaCodec.BufferInfo,
+    ): Int {
+        if (adtsBytes.size < size) adtsBytes = ByteArray(size)
+        buffer.position(0)
+        buffer.get(adtsBytes, 0, size)
+        val frames = AdtsFrames.split(adtsBytes, size)
+        // 프레임 길이(1024 샘플)는 머리표의 샘플레이트 기준(HE-AAC 도 맞다).
+        val rate = AdtsFrames.header(adtsBytes, 0)?.sampleRate?.takeIf { it > 0 } ?: sampleRate
+        if (frames == null || rate <= 0) {
+            buffer.position(0)
+            info.set(0, size, timeUs, 0)
+            muxer.writeSampleData(track, buffer, info)
+            return 1
+        }
+        for ((i, f) in frames.withIndex()) {
+            val (off, len) = f
+            if (frameBuf.capacity() < len) frameBuf = ByteBuffer.allocateDirect(len * 2)
+            frameBuf.clear()
+            frameBuf.put(adtsBytes, off, len)
+            frameBuf.flip()
+            // 덩어리 사이 시각이 조금 겹쳐도 뒤로 가지 않게 한다(MP4 음성은 시각이 늘기만 해야 한다).
+            var at = timeUs + i * 1024L * 1_000_000L / rate
+            if (at <= lastAudioUs) at = lastAudioUs + 1
+            lastAudioUs = at
+            info.set(0, len, at, 0)
+            muxer.writeSampleData(track, frameBuf, info)
+        }
+        return frames.size
+    }
+
+    /**
+     * MP4 에 넣을 음성 형식과, 샘플이 ADTS 덩어리인지. AAC 이면 첫 샘플을 읽어 보고, ADTS 면
+     * 'is-adts' 표시를 지우고 AudioSpecificConfig(csd-0)가 없으면 머리표에서 만들어 넣는다.
+     */
+    private fun mp4AudioFormat(ex: MediaExtractor, audio: Pick): Pair<MediaFormat, Boolean> {
+        val format = MediaFormat(audio.format)
+        try {
+            if (format.getString(MediaFormat.KEY_MIME) != MediaFormat.MIMETYPE_AUDIO_AAC) return format to false
+            ex.selectTrack(audio.track)
+            if (ex.sampleTrackIndex < 0) return format to false
+            val buf = ByteBuffer.allocateDirect(maxOf(maxInput(audio.format), 1 shl 16))
+            val size = ex.readSampleData(buf, 0)
+            if (size < 7) return format to false
+            val bytes = ByteArray(size)
+            buf.position(0)
+            buf.get(bytes, 0, size)
+            val header = AdtsFrames.header(bytes, 0) ?: return format to false
+            if (format.containsKey("is-adts")) format.removeKey("is-adts")
+            if (!format.containsKey("csd-0")) {
+                format.setByteBuffer("csd-0", ByteBuffer.wrap(AdtsFrames.audioSpecificConfig(header)))
+            }
+            if (!format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) format.setInteger(MediaFormat.KEY_SAMPLE_RATE, header.sampleRate)
+            return format to true
+        } catch (e: Exception) {
+            return format to false
+        } finally {
+            ex.release()
         }
     }
 

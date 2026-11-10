@@ -150,7 +150,11 @@ class MediaEngine(
             "repair" -> {
                 cancelled.set(false)
                 val uri = call.uri("uri")
-                background(exportExecutor, result) { repair(uri) }
+                val toGallery = call.argument<Boolean>("toGallery") == true
+                background(exportExecutor, result) {
+                    val fixed = repair(uri)
+                    if (!toGallery) fixed else saveRepaired(uri, Uri.parse(fixed))
+                }
             }
             "compress" -> {
                 cancelled.set(false)
@@ -260,12 +264,33 @@ class MediaEngine(
                 "videoBytes" to videoBytes,
                 "audioBytes" to audioBytes,
                 "exactCut" to false,
+                // 음성 샘플이 ADTS 덩어리(스트리밍을 옮긴 파일)면 소리가 안 난다 → 고쳐서 써야 한다.
+                "audioAdts" to audioIsAdts(uri, t),
             )
         } finally {
             ex.release()
             retriever.release()
         }
     }
+
+    /** 첫 음성 샘플이 ADTS 머리표로 시작하는지(MP4 안에 있으면 소리가 나지 않는 형태). */
+    private fun audioIsAdts(uri: Uri, t: Tracks): Boolean = runCatching {
+        if (t.audio < 0) return false
+        if (t.audioFormat?.getString(MediaFormat.KEY_MIME) != MediaFormat.MIMETYPE_AUDIO_AAC) return false
+        val ex = openExtractor(uri)
+        try {
+            ex.selectTrack(t.audio)
+            val buf = ByteBuffer.allocateDirect(1 shl 20)
+            val size = ex.readSampleData(buf, 0)
+            if (size < 7) return false
+            val head = ByteArray(minOf(size, 16))
+            buf.position(0)
+            buf.get(head)
+            AdtsFrames.isAdts(head, 0, head.size)
+        } finally {
+            ex.release()
+        }
+    }.getOrDefault(false)
 
     /** 코덱 설정 데이터(SPS/PPS 등)의 지문. 같아야 한 트랙으로 이어 붙여도 재생된다. */
     private fun csdSignature(f: MediaFormat): String? {
@@ -940,6 +965,29 @@ class MediaEngine(
                     if (!ex.advance()) break
                 }
                 line("영상 샘플(5초 동안 센 것): $n, 키프레임 $sync")
+                if (t.audio >= 0) {
+                    val a = openExtractor(uri)
+                    try {
+                        a.selectTrack(t.audio)
+                        val buf = ByteBuffer.allocateDirect(1 shl 20)
+                        val sizes = ArrayList<Int>()
+                        var head = ""
+                        while (a.sampleTrackIndex >= 0 && sizes.size < 50) {
+                            val sz = a.readSampleData(buf, 0)
+                            if (sizes.isEmpty() && sz > 0) {
+                                val b = ByteArray(minOf(sz, 8))
+                                buf.position(0)
+                                buf.get(b)
+                                head = b.joinToString(" ") { "%02x".format(it) }
+                            }
+                            sizes += sz
+                            if (!a.advance()) break
+                        }
+                        line("음성 첫 샘플: [$head] ADTS=${head.startsWith("ff f")}, 평균 크기 ${sizes.average().toInt()}바이트")
+                    } finally {
+                        a.release()
+                    }
+                }
                 line("앞 샘플(시각/크기/키): ${first.joinToString(" ")}")
             } finally {
                 ex.release()
@@ -993,6 +1041,20 @@ class MediaEngine(
             throw e
         }
         return Uri.fromFile(out).toString()
+    }
+
+    /** 고친 사본을 갤러리에 새 파일로 저장한다(원본 이름 + '_소리복구'). 사본은 지운다. */
+    private fun saveRepaired(original: Uri, fixed: Uri): Map<String, Any?> {
+        val file = java.io.File(fixed.path!!)
+        try {
+            val base = (displayName(original)?.substringBeforeLast('.') ?: "ZamZam") + "_소리복구"
+            val r = toGallery("$base.mp4", "video/mp4") { fd ->
+                java.io.FileInputStream(file).use { input -> FileOutputStream(fd).use { input.copyTo(it, 256 * 1024) } }
+            }
+            return r + ("durationUs" to durationOf(Uri.parse(r["uri"] as String)))
+        } finally {
+            file.delete()
+        }
     }
 
     /** 갤러리의 영상을 [shortSide] 해상도로 낮춰 새 파일로 저장한다(자르기·합치기처럼 진행률을 보낸다). */

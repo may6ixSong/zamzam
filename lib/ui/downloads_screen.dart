@@ -126,6 +126,16 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
               ),
               if (defaultTargetPlatform == TargetPlatform.android)
                 ListTile(
+                  leading: const Icon(Icons.volume_up_rounded, color: Palette.trim),
+                  title: const Text('소리 복구'),
+                  subtitle: const Text(
+                    '소리가 안 나면: 고친 영상을 새 파일로 저장해요',
+                    style: TextStyle(fontSize: 12.5, color: Palette.muted),
+                  ),
+                  onTap: () => Navigator.pop(c, 'fixAudio'),
+                ),
+              if (defaultTargetPlatform == TargetPlatform.android)
+                ListTile(
                   leading: const Icon(Icons.compress_rounded, color: Palette.ok),
                   title: const Text('용량 줄이기'),
                   subtitle: const Text('해상도를 낮춰 새 파일로 저장해요', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
@@ -183,6 +193,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         _toast('이어 붙일 영상을 순서대로 눌러 주세요');
       case 'compress':
         await _compress(item);
+      case 'fixAudio':
+        await _fixAudio(item);
       case 'open':
         MediaEngine.instance.openInGallery(item.uri).catchError((_) => _toast('열 수 있는 앱이 없어요'));
       case 'diagnose':
@@ -194,6 +206,43 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
         await _downloads.remove(item);
         _selected.remove(item.id);
     }
+  }
+
+  /// 소리가 안 나는 영상을 고쳐 새 파일로 저장하고 목록에 넣는다(원본은 그대로).
+  Future<void> _fixAudio(DownloadItem item) async {
+    final engine = MediaEngine.instance;
+    VideoInfo info;
+    try {
+      info = await engine.probe(item.uri);
+    } catch (e) {
+      _toast('영상을 열지 못했어요');
+      return;
+    }
+    if (!info.audioAdts) {
+      if (mounted) _toast(info.audioMime == null ? '이 영상에는 소리가 없어요' : '이 영상은 소리 형식이 정상이에요');
+      return;
+    }
+    if (!mounted) return;
+    ExportResult? made;
+    await runExport(
+      context,
+      title: '소리 복구하는 중',
+      detail: '음성을 정상 형식으로 옮기는 중',
+      job: () async => made = await engine.repairToGallery(item.uri),
+    );
+    final r = made;
+    if (r == null) return;
+    _downloads.add(
+      DownloadItem(
+        id: '${DateTime.now().microsecondsSinceEpoch}-a',
+        uri: r.uri,
+        name: r.name,
+        sizeBytes: r.sizeBytes,
+        sourceUrl: item.sourceUrl,
+        pageUrl: item.pageUrl,
+        time: DateTime.now(),
+      ),
+    );
   }
 
   /// 해상도를 골라 다시 압축하고, 새 파일을 목록에 넣는다(원본은 그대로).

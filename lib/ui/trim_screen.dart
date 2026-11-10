@@ -118,8 +118,14 @@ class _TrimScreenState extends State<TrimScreen> {
       _failLoad('영상을 열지 못했어요: ${e is PlatformException ? e.message : e}');
       return;
     }
-    if (!repaired && needsRepair(keyframesUs: info.keyframesUs, durationUs: info.durationUs, fps: info.fps)) {
-      DiagLog.add('키프레임 정보가 이상해 고친 사본을 만듦');
+    if (!repaired &&
+        needsRepair(
+          keyframesUs: info.keyframesUs,
+          durationUs: info.durationUs,
+          fps: info.fps,
+          audioAdts: info.audioAdts,
+        )) {
+      DiagLog.add(info.audioAdts ? '음성이 깨진 파일이라 고친 사본을 만듦' : '키프레임 정보가 이상해 고친 사본을 만듦');
       return _repairAndLoad(uri);
     }
     try {

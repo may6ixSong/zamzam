@@ -125,6 +125,9 @@ class MediaEngine {
     }
   }
 
+  /// 소리가 안 나는 영상(브라우저로 받은 스트리밍 영상)을 고쳐 갤러리에 새 파일로 저장한다. 원본은 그대로.
+  Future<ExportResult> repairToGallery(String uri) => _export('repair', {'uri': uri, 'toGallery': true});
+
   /// 갤러리의 영상을 짧은 변 [shortSide] 해상도로 낮춰 새 파일로 저장한다(Android, 진행률은 [progress]).
   Future<ExportResult> compress(String uri, {required int shortSide}) =>
       _export('compress', {'uri': uri, 'shortSide': shortSide});
