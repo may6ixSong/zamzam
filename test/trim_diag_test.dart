@@ -35,7 +35,7 @@ void main() {
     // 창을 닫아도 위쪽 진단 버튼이 남아 있다.
     await tester.tap(find.text('닫기'));
     await tester.pumpAndSettle();
-    expect(find.text('문제 진단'), findsOneWidget);
+    expect(find.text('진단'), findsOneWidget);
   });
 
   testWidgets('미리보기 재생기가 안 열려도 자르기 화면은 열린다(정지 화면으로 편집)', (tester) async {

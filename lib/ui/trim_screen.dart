@@ -12,6 +12,7 @@ import '../core/trim_range.dart';
 import '../core/video_info.dart';
 import 'diagnosis.dart';
 import 'theme.dart';
+import 'trash_flow.dart';
 import 'trim_preview_screen.dart';
 import 'time_fields.dart';
 import 'trim_timeline.dart';
@@ -222,6 +223,26 @@ class _TrimScreenState extends State<TrimScreen> {
     if (diagnose == true) await _diagnose();
   }
 
+  /// 원본 영상을 휴지통으로 옮긴다. 옮기면 편집 화면을 비운다(자른 결과물은 그대로).
+  Future<void> _trashOriginal() async {
+    final src = _sourceUri;
+    if (src == null) return;
+    await _ctrl?.pause();
+    if (!mounted) return;
+    final moved = await confirmAndTrash(context, uris: [src], what: '원본 영상', keeps: '이미 잘라서 저장한 영상은 그대로 남아요.');
+    if (!moved || !mounted) return;
+    final old = _ctrl;
+    setState(() {
+      _ctrl = null;
+      _info = null;
+      _sourceUri = null;
+      _repairedUri = null;
+      _thumbs = const [];
+      _still = null;
+    });
+    unawaited(old?.dispose().catchError((_) {}));
+  }
+
   Future<void> _diagnose() async {
     final src = _sourceUri;
     if (src == null || !mounted) return;
@@ -416,13 +437,8 @@ class _TrimScreenState extends State<TrimScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => TrimPreviewScreen(
-          info: info,
-          startUs: _range.startUs,
-          actualStartUs: _actualStart,
-          endUs: _range.endUs,
-          originalUri: _sourceUri,
-        ),
+        builder: (_) =>
+            TrimPreviewScreen(info: info, startUs: _range.startUs, actualStartUs: _actualStart, endUs: _range.endUs),
       ),
     );
   }
@@ -446,11 +462,19 @@ class _TrimScreenState extends State<TrimScreen> {
           title: const Text('동영상 자르기'),
           actions: [
             // 영상을 고른 뒤에는 로딩 중에도 항상 보인다(로딩에서 멈출 때가 진단이 가장 필요할 때).
+            // 원본 영상만 휴지통으로(확인 후). 영상을 연 뒤에만 보인다.
+            if (_info != null && _sourceUri != null && !_loading)
+              IconButton(
+                tooltip: '원본 영상을 휴지통으로',
+                onPressed: _trashOriginal,
+                icon: const Icon(Icons.delete_outline_rounded, color: Palette.bad),
+              ),
             if (_sourceUri != null)
               TextButton.icon(
+                // 좁은 폰에서도 제목이 잘리지 않게 짧게 쓴다(눌러서 '문제 진단').
                 onPressed: _diagnose,
                 icon: const Icon(Icons.bug_report_outlined, size: 20),
-                label: const Text('문제 진단'),
+                label: const Text('진단'),
               ),
             if (_info != null)
               Padding(

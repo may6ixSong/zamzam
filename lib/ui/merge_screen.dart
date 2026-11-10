@@ -10,6 +10,7 @@ import '../core/video_info.dart';
 import 'downloads_screen.dart';
 import 'export_flow.dart';
 import 'theme.dart';
+import 'trash_flow.dart';
 import 'video_view.dart';
 
 class _Clip {
@@ -199,6 +200,28 @@ class _MergeScreenState extends State<MergeScreen> {
     if (mounted) await _add();
   }
 
+  /// 불러온 조각 영상들(갤러리의 원래 영상)을 휴지통으로 옮기고 목록을 비운다. 합친 영상은 그대로.
+  Future<void> _trashClips() async {
+    await _preview?.pause();
+    if (!mounted) return;
+    final sources = {for (final c in _clips) c.source}.toList();
+    final moved = await confirmAndTrash(
+      context,
+      uris: sources,
+      what: '조각 영상 ${sources.length}개',
+      keeps: '합친 영상은 그대로 남아요.',
+    );
+    if (!moved || !mounted) return;
+    final old = _preview;
+    setState(() {
+      _clips.clear();
+      _selected = 0;
+      _preview = null;
+      _previewClip = null;
+    });
+    await old?.dispose();
+  }
+
   Future<void> _loadPreview(_Clip clip) async {
     if (_previewLoading) return;
     _previewLoading = true;
@@ -230,14 +253,7 @@ class _MergeScreenState extends State<MergeScreen> {
   Future<void> _merge() async {
     await _preview?.pause();
     if (!mounted) return;
-    final sources = {for (final c in _clips) c.source}.toList();
-    await runExport(
-      context,
-      title: '동영상 합치는 중',
-      job: () => _engine.merge([for (final c in _clips) c.info.uri]),
-      trashUris: sources,
-      trashLabel: '합친 조각 ${sources.length}개',
-    );
+    await runExport(context, title: '동영상 합치는 중', job: () => _engine.merge([for (final c in _clips) c.info.uri]));
   }
 
   void _toast(String msg) {
@@ -258,6 +274,13 @@ class _MergeScreenState extends State<MergeScreen> {
         appBar: AppBar(
           title: const Text('동영상 합치기'),
           actions: [
+            // 불러온 조각 영상들만 휴지통으로(확인 후). 합친 영상은 그대로 둔다.
+            if (_clips.isNotEmpty)
+              IconButton(
+                tooltip: '조각 영상을 휴지통으로',
+                onPressed: _adding ? null : _trashClips,
+                icon: const Icon(Icons.delete_outline_rounded, color: Palette.bad),
+              ),
             if (_clips.isNotEmpty)
               TextButton.icon(
                 onPressed: _adding ? null : _reset,
