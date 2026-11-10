@@ -415,7 +415,7 @@ class _TrimScreenState extends State<TrimScreen> {
       message: '편집 중인 구간 설정이 사라져요.',
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('동영상 자르기'),
+          title: const Text('구간 자르기'),
           actions: [
             // 원본 영상만 휴지통으로(확인 후). 영상을 연 뒤에만 보인다.
             if (_info != null && _sourceUri != null && !_loading)

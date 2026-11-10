@@ -10,6 +10,7 @@ import '../core/quality.dart';
 import '../core/time_format.dart';
 import '../core/video_info.dart';
 import '../core/web_address.dart';
+import 'crop_screen.dart';
 import 'export_flow.dart';
 import 'merge_screen.dart';
 import 'theme.dart';
@@ -114,9 +115,16 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
               ),
               ListTile(
                 leading: const Icon(Icons.content_cut_rounded, color: Palette.accent),
-                title: const Text('자르기'),
+                title: const Text('구간 자르기'),
                 onTap: () => Navigator.pop(c, 'trim'),
               ),
+              if (defaultTargetPlatform == TargetPlatform.android)
+                ListTile(
+                  leading: const Icon(Icons.crop_rounded, color: Color(0xFF19B99A)),
+                  title: const Text('크기 자르기'),
+                  subtitle: const Text('가로·세로 영역 자르기, 90도 회전', style: TextStyle(fontSize: 12.5, color: Palette.muted)),
+                  onTap: () => Navigator.pop(c, 'crop'),
+                ),
               ListTile(
                 leading: const Icon(Icons.view_week_outlined, color: Palette.violet),
                 title: const Text('합치기'),
@@ -172,6 +180,8 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     switch (action) {
       case 'trim':
         _trim(item);
+      case 'crop':
+        Navigator.push(context, MaterialPageRoute(builder: (_) => CropScreen(initialUri: item.uri)));
       case 'merge':
         setState(() {
           _selecting = true;
@@ -412,7 +422,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                     style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(50)),
                                     onPressed: chosen.length == 1 ? () => _trim(chosen.first) : null,
                                     icon: const Icon(Icons.content_cut_rounded, size: 19),
-                                    label: const Text('자르기'),
+                                    label: const Text('구간 자르기'),
                                   ),
                                 ),
                                 const SizedBox(width: 10),

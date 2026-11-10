@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/media_engine.dart';
+import 'crop_screen.dart';
 import 'merge_screen.dart';
 import 'theme.dart';
 import 'trim_screen.dart';
@@ -18,9 +19,16 @@ class MenuScreen extends StatelessWidget {
             final cut = _MenuCard(
               colors: const [Palette.accentDeep, Palette.accent, Color(0xFF7AA3FF)],
               icon: Icons.content_cut_rounded,
-              title: '동영상 자르기',
-              body: '영상 하나에서 시작·끝을 정해\n그 구간만 새 동영상으로 저장해요',
+              title: '구간 자르기',
+              body: '시작·끝을 정해 그 구간만\n무손실로 저장해요',
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TrimScreen())),
+            );
+            final crop = _MenuCard(
+              colors: const [Color(0xFF0E9F8A), Color(0xFF19B99A), Color(0xFF5ED6BA)],
+              icon: Icons.crop_rounded,
+              title: '크기 자르기',
+              body: '가로·세로 영역을 정하고\n90도 회전도 할 수 있어요',
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CropScreen())),
             );
             final merge = _MenuCard(
               colors: const [Color(0xFF7C4DFF), Palette.violet, Color(0xFFB48CFF)],
@@ -35,13 +43,17 @@ class MenuScreen extends StatelessWidget {
                     children: [
                       Expanded(child: cut),
                       const SizedBox(width: 16),
+                      Expanded(child: crop),
+                      const SizedBox(width: 16),
                       Expanded(child: merge),
                     ],
                   )
                 : Column(
                     children: [
                       Expanded(child: cut),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
+                      Expanded(child: crop),
+                      const SizedBox(height: 12),
                       Expanded(child: merge),
                     ],
                   );
@@ -74,7 +86,7 @@ class MenuScreen extends StatelessWidget {
                   if (!short) ...[
                     const SizedBox(height: 12),
                     Text(
-                      wide ? '원본 화질 그대로, 용량은 딱 필요한 만큼' : '원본 화질 그대로,\n용량은 딱 필요한 만큼',
+                      wide ? '자르고, 돌리고, 이어 붙이기' : '자르고, 돌리고,\n이어 붙이기',
                       style: TextStyle(
                         fontSize: wide ? 30 : 25,
                         fontWeight: FontWeight.w800,
@@ -83,7 +95,10 @@ class MenuScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    const Text('다시 인코딩하지 않고 자르고 이어 붙여요', style: TextStyle(fontSize: 13.5, color: Palette.muted)),
+                    const Text(
+                      '구간 자르기·합치기는 원본 화질 그대로, 크기 자르기는 원본보다 커지지 않게',
+                      style: TextStyle(fontSize: 13.5, color: Palette.muted),
+                    ),
                   ],
                   SizedBox(height: short ? 8 : (wide ? 24 : 18)),
                   Expanded(child: cards),

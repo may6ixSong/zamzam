@@ -133,7 +133,7 @@ class PrimaryButton extends StatelessWidget {
         foregroundColor: Colors.white,
         disabledForegroundColor: const Color(0xFF6F7581),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 16, fontWeight: FontWeight.w700),
       ),
       onPressed: onPressed,
       icon: Icon(icon, size: 21),

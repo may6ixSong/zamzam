@@ -136,6 +136,11 @@ class MediaEngine {
   /// 소리가 안 나는 영상(브라우저로 받은 스트리밍 영상)을 고쳐 갤러리에 새 파일로 저장한다. 원본은 그대로.
   Future<ExportResult> repairToGallery(String uri) => _export('repair', {'uri': uri, 'toGallery': true});
 
+  /// 크기 자르기: 화면을 [rotateCcw]도 왼쪽으로 돌린 뒤 [crop](왼, 위, 오른, 아래 · 0~1) 영역만 남겨
+  /// 다시 압축한다(Android). 진행률은 [progress]로 온다. [name]은 저장 이름의 앞부분.
+  Future<ExportResult> crop(String uri, {required List<double> crop, int rotateCcw = 0, String? name}) =>
+      _export('crop', {'uri': uri, 'crop': crop, 'rotateCcw': rotateCcw, 'name': name});
+
   /// 갤러리의 영상을 짧은 변 [shortSide] 해상도로 낮춰 새 파일로 저장한다(Android, 진행률은 [progress]).
   Future<ExportResult> compress(String uri, {required int shortSide}) =>
       _export('compress', {'uri': uri, 'shortSide': shortSide});

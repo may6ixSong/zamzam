@@ -153,6 +153,14 @@ class MediaEngine(
                     if (!toGallery) fixed else saveRepaired(uri, Uri.parse(fixed))
                 }
             }
+            "crop" -> {
+                cancelled.set(false)
+                val uri = call.uri("uri")
+                val crop = call.argument<List<Number>>("crop")!!.map { it.toFloat() }
+                val rotateCcw = call.argument<Number>("rotateCcw")?.toInt() ?: 0
+                val name = call.argument<String>("name")
+                background(exportExecutor, result) { crop(uri, crop, rotateCcw, name) }
+            }
             "compress" -> {
                 cancelled.set(false)
                 val uri = call.uri("uri")
@@ -977,6 +985,33 @@ class MediaEngine(
             return r + ("durationUs" to durationOf(Uri.parse(r["uri"] as String)))
         } finally {
             file.delete()
+        }
+    }
+
+    /**
+     * 크기 자르기: 화면을 [rotateCcw]도 왼쪽으로 돌리고 [crop] 영역(0~1)만 남겨 다시 압축한다.
+     * 남는 면적 비율만큼 비트레이트를 줄여 원본보다 커지지 않게 한다. 진행률은 자르기·합치기와 같은 채널.
+     */
+    private fun crop(uri: Uri, crop: List<Float>, rotateCcw: Int, name: String?): Map<String, Any?> {
+        require(crop.size == 4 && crop[2] > crop[0] && crop[3] > crop[1]) { "자를 영역이 올바르지 않아요" }
+        val work = java.io.File(ctx.cacheDir, "crop").apply { deleteRecursively(); mkdirs() }
+        try {
+            val plan = Transcoder.cropPlan(ctx, uri, crop, rotateCcw)
+            val out = java.io.File(work, "out.mp4")
+            try {
+                Transcoder(ctx, main).runCrop(uri, out, plan, cancelled) { pct ->
+                    main.post { channel.invokeMethod("progress", pct / 100.0) }
+                }
+            } catch (e: Transcoder.Cancelled) {
+                throw CancelledException()
+            }
+            val base = (name ?: displayName(uri)?.substringBeforeLast('.') ?: "ZamZam") + "_crop"
+            val r = toGallery("$base.mp4", "video/mp4") { fd ->
+                java.io.FileInputStream(out).use { input -> FileOutputStream(fd).use { input.copyTo(it, 256 * 1024) } }
+            }
+            return r + ("durationUs" to durationOf(Uri.parse(r["uri"] as String)))
+        } finally {
+            work.deleteRecursively()
         }
     }
 
