@@ -125,6 +125,17 @@ class MediaEngine {
     }
   }
 
+  /// 영상들을 갤러리 휴지통으로 옮긴다(Android 11+). 안드로이드가 확인 창을 띄운다.
+  /// [moved]: 사용자가 허락해 옮겼는지, [skipped]: 찾지 못해 건너뛴 수(앱 임시 사본 등).
+  Future<({bool moved, int count, int skipped})> trash(List<String> uris) async {
+    final m = await _channel.invokeMapMethod<String, dynamic>('trash', {'uris': uris});
+    return (
+      moved: m?['moved'] == true,
+      count: (m?['count'] as num?)?.toInt() ?? 0,
+      skipped: (m?['skipped'] as num?)?.toInt() ?? 0,
+    );
+  }
+
   /// 소리가 안 나는 영상(브라우저로 받은 스트리밍 영상)을 고쳐 갤러리에 새 파일로 저장한다. 원본은 그대로.
   Future<ExportResult> repairToGallery(String uri) => _export('repair', {'uri': uri, 'toGallery': true});
 

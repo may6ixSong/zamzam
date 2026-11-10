@@ -416,8 +416,13 @@ class _TrimScreenState extends State<TrimScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) =>
-            TrimPreviewScreen(info: info, startUs: _range.startUs, actualStartUs: _actualStart, endUs: _range.endUs),
+        builder: (_) => TrimPreviewScreen(
+          info: info,
+          startUs: _range.startUs,
+          actualStartUs: _actualStart,
+          endUs: _range.endUs,
+          originalUri: _sourceUri,
+        ),
       ),
     );
   }

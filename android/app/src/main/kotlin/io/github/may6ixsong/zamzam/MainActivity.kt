@@ -1,6 +1,10 @@
 package io.github.may6ixsong.zamzam
 
+import android.app.Activity
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
+import androidx.activity.result.IntentSenderRequest
 import android.webkit.MimeTypeMap
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,6 +16,14 @@ import io.flutter.plugins.webviewflutter.WebViewFlutterAndroidExternalApi
 class MainActivity : FlutterFragmentActivity() {
     private var pendingPick: MethodChannel.Result? = null
     private var pendingFiles: MethodChannel.Result? = null
+    private var pendingTrash: MethodChannel.Result? = null
+
+    // 휴지통으로 옮기기: 안드로이드가 확인 창을 띄우고, 허락하면 옮긴다(30일 뒤 완전히 지워짐).
+    private val trashLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
+        val result = pendingTrash ?: return@registerForActivityResult
+        pendingTrash = null
+        result.success(r.resultCode == Activity.RESULT_OK)
+    }
     private var engine: MediaEngine? = null
     private var nativePlayer: NativePlayer? = null
 
@@ -34,7 +46,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "zamzam/media")
-        engine = MediaEngine(applicationContext, channel, ::startPick, ::startFilePick) { id ->
+        engine = MediaEngine(applicationContext, channel, ::startPick, ::startFilePick, ::startTrash) { id ->
             @Suppress("DEPRECATION")
             WebViewFlutterAndroidExternalApi.getWebView(flutterEngine, id)
         }
@@ -62,6 +74,22 @@ class MainActivity : FlutterFragmentActivity() {
         val r = pendingPick ?: return
         pendingPick = null
         r.success(uris.map { it.toString() })
+    }
+
+    private fun startTrash(uris: List<Uri>, result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            result.error("UNSUPPORTED", "안드로이드 11 이상에서만 휴지통으로 옮길 수 있어요", null)
+            return
+        }
+        try {
+            val request = MediaStore.createTrashRequest(contentResolver, uris, true)
+            pendingTrash?.success(false)
+            pendingTrash = result
+            trashLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        } catch (e: Exception) {
+            pendingTrash = null
+            result.error("FAILED", e.message ?: "휴지통으로 옮기지 못했어요", null)
+        }
     }
 
     private fun startFilePick(accept: List<String>, multiple: Boolean, result: MethodChannel.Result) {

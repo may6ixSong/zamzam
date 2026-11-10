@@ -47,6 +47,7 @@ class MediaEngine(
     private val channel: MethodChannel,
     private val picker: (multiple: Boolean, result: MethodChannel.Result) -> Unit,
     private val filePicker: (accept: List<String>, multiple: Boolean, result: MethodChannel.Result) -> Unit,
+    private val trasher: (uris: List<Uri>, result: MethodChannel.Result) -> Unit,
     private val webViewOf: (id: Long) -> android.webkit.WebView?,
 ) : MethodChannel.MethodCallHandler {
 
@@ -172,6 +173,24 @@ class MediaEngine(
                 result,
             )
             "openExternal" -> result.success(openExternal(call.argument<String>("url")!!))
+            "trash" -> {
+                // 갤러리 선택기 주소 등을 미디어 저장소 주소로 바꾼 뒤 휴지통 요청을 띄운다.
+                val requested = call.argument<List<String>>("uris")!!.map(Uri::parse)
+                val media = requested.mapNotNull { mediaStoreUri(it) }.distinct()
+                val skipped = requested.size - media.size
+                if (media.isEmpty()) {
+                    result.success(mapOf("moved" to false, "count" to 0, "skipped" to skipped))
+                } else {
+                    trasher(media, object : MethodChannel.Result {
+                        override fun success(value: Any?) =
+                            result.success(mapOf("moved" to (value == true), "count" to media.size, "skipped" to skipped))
+
+                        override fun error(code: String, message: String?, details: Any?) = result.error(code, message, details)
+
+                        override fun notImplemented() = result.notImplemented()
+                    })
+                }
+            }
             "installPageScript" -> result.success(installPageScript(call.long("webView"), call.argument<String>("script")!!))
             else -> result.notImplemented()
         }
@@ -272,6 +291,26 @@ class MediaEngine(
             retriever.release()
         }
     }
+
+    /**
+     * 휴지통 요청에 쓸 미디어 저장소 주소(content://media/external/video/media/ID).
+     * 갤러리 선택기 주소는 끝의 번호가 같은 항목을 찾아 이름·크기가 맞는지 확인한다.
+     * 앱 임시 폴더의 사본(file://)이나 찾지 못한 항목은 null(건너뛴다).
+     */
+    private fun mediaStoreUri(uri: Uri): Uri? = runCatching {
+        if (uri.scheme != "content") return null
+        val path = uri.path ?: ""
+        if (uri.authority == MediaStore.AUTHORITY && !path.contains("/picker")) return uri
+        // 문서 선택기 주소(content://com.android.providers.media.documents/...)
+        if (uri.authority == "com.android.providers.media.documents") return MediaStore.getMediaUri(ctx, uri)
+        val id = uri.lastPathSegment?.toLongOrNull() ?: return null
+        val candidate = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL, id)
+        val (name, size) = nameAndSize(uri)
+        val match = ctx.contentResolver.query(
+            candidate, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.SIZE), null, null, null,
+        )?.use { c -> c.moveToFirst() && (c.getLong(1) == size || c.getString(0) == name) } ?: false
+        if (match) candidate else null
+    }.getOrNull()
 
     /** 첫 음성 샘플이 ADTS 머리표로 시작하는지(MP4 안에 있으면 소리가 나지 않는 형태). */
     private fun audioIsAdts(uri: Uri, t: Tracks): Boolean = runCatching {

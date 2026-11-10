@@ -13,9 +13,12 @@ import 'theme.dart';
 import 'video_view.dart';
 
 class _Clip {
-  _Clip(this.info) : key = UniqueKey();
+  _Clip(this.info, {required this.source}) : key = UniqueKey();
 
   final VideoInfo info;
+
+  /// 갤러리의 원래 영상(고친 사본으로 바꿔 써도 휴지통에는 이걸 옮긴다).
+  final String source;
   final Key key;
   Uint8List? thumb;
 }
@@ -122,7 +125,7 @@ class _MergeScreenState extends State<MergeScreen> {
         )) {
           info = await _engine.probe(await _engine.repair(uri));
         }
-        final clip = _Clip(info);
+        final clip = _Clip(info, source: uri);
         if (!mounted) return;
         setState(() => _clips.add(clip));
         _engine.thumbnails(info.uri, count: 1, height: 120).then((t) {
@@ -227,7 +230,14 @@ class _MergeScreenState extends State<MergeScreen> {
   Future<void> _merge() async {
     await _preview?.pause();
     if (!mounted) return;
-    await runExport(context, title: '동영상 합치는 중', job: () => _engine.merge([for (final c in _clips) c.info.uri]));
+    final sources = {for (final c in _clips) c.source}.toList();
+    await runExport(
+      context,
+      title: '동영상 합치는 중',
+      job: () => _engine.merge([for (final c in _clips) c.info.uri]),
+      trashUris: sources,
+      trashLabel: '합친 조각 ${sources.length}개',
+    );
   }
 
   void _toast(String msg) {

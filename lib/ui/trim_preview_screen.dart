@@ -20,7 +20,11 @@ class TrimPreviewScreen extends StatefulWidget {
     required this.startUs,
     required this.actualStartUs,
     required this.endUs,
+    this.originalUri,
   });
+
+  /// 저장 뒤 휴지통으로 옮길 원본(고친 사본으로 편집했어도 갤러리의 원래 영상).
+  final String? originalUri;
 
   final VideoInfo info;
   final int startUs;
@@ -98,6 +102,8 @@ class _TrimPreviewScreenState extends State<TrimPreviewScreen> {
     final ok = await runExport(
       context,
       title: '새 동영상 만드는 중',
+      trashUris: [widget.originalUri ?? widget.info.uri],
+      trashLabel: '원본 영상',
       job: () => MediaEngine.instance.trim(
         widget.info.uri,
         startUs: widget.startUs,
