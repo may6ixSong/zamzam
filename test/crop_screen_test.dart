@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zamzam/ui/crop_screen.dart';
+import 'package:zamzam/ui/menu_screen.dart';
 
 void main() {
   testWidgets('비율 1:1 을 고르고 돌린 뒤 저장하면 그 영역·회전으로 변환을 요청한다', (tester) async {
@@ -94,6 +95,60 @@ void main() {
     await tester.pumpAndSettle();
     expect(trashed, ['content://media/external/video/media/7']);
     expect(find.text('원본 영상을 휴지통으로 옮겼어요'), findsOneWidget);
-    expect(find.byTooltip('원본 영상을 휴지통으로'), findsNothing);
+    // 원본이 없어졌으니 편집 메뉴로 돌아간다.
+    expect(find.byType(CropScreen), findsNothing);
+    expect(find.byType(MenuScreen), findsOneWidget);
+  });
+
+  testWidgets('메뉴에서 들어왔으면 원본을 지운 뒤 그 메뉴로 돌아간다', (tester) async {
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 2.75;
+    addTearDown(tester.view.reset);
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(const MethodChannel('zamzam/media'), (call) async {
+      switch (call.method) {
+        case 'pickVideos':
+          return ['content://media/external/video/media/7'];
+        case 'probe':
+          return {
+            'uri': 'content://media/external/video/media/7',
+            'name': 'clip.mp4',
+            'size': 40000000,
+            'durationUs': 30000000,
+            'width': 1920,
+            'height': 1080,
+            'videoMime': 'video/avc',
+            'fps': 30.0,
+            'keyframesUs': [for (var i = 0; i < 15; i++) i * 2000000],
+            'videoBytes': 38000000,
+            'audioBytes': 2000000,
+          };
+        case 'trash':
+          return {'moved': true, 'count': 1, 'skipped': 0};
+      }
+      return null;
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) =>
+              TextButton(onPressed: () => Navigator.push(context, MenuScreen.route()), child: const Text('browser')),
+        ),
+      ),
+    );
+    await tester.tap(find.text('browser'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('크기 자르기'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CropScreen), findsOneWidget);
+    await tester.tap(find.byTooltip('원본 영상을 휴지통으로'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('휴지통으로'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CropScreen), findsNothing);
+    expect(find.byType(MenuScreen), findsOneWidget);
+    // 메뉴가 하나뿐이라 뒤로 가면 브라우저.
+    Navigator.of(tester.element(find.byType(MenuScreen))).pop();
+    await tester.pumpAndSettle();
+    expect(find.text('browser'), findsOneWidget);
   });
 }

@@ -9,6 +9,7 @@ import '../core/trim_range.dart';
 import '../core/video_info.dart';
 import 'downloads_screen.dart';
 import 'export_flow.dart';
+import 'menu_screen.dart';
 import 'theme.dart';
 import 'trash_flow.dart';
 import 'video_view.dart';
@@ -212,14 +213,8 @@ class _MergeScreenState extends State<MergeScreen> {
       keeps: '합친 영상은 그대로 남아요.',
     );
     if (!moved || !mounted) return;
-    final old = _preview;
-    setState(() {
-      _clips.clear();
-      _selected = 0;
-      _preview = null;
-      _previewClip = null;
-    });
-    await old?.dispose();
+    // 원본이 없어졌으니 편집 메뉴로 돌아간다.
+    MenuScreen.backTo(context);
   }
 
   Future<void> _loadPreview(_Clip clip) async {

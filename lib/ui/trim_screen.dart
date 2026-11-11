@@ -9,6 +9,7 @@ import '../core/media_engine.dart';
 import '../core/time_format.dart';
 import '../core/trim_range.dart';
 import '../core/video_info.dart';
+import 'menu_screen.dart';
 import 'theme.dart';
 import 'trash_flow.dart';
 import 'trim_preview_screen.dart';
@@ -186,7 +187,7 @@ class _TrimScreenState extends State<TrimScreen> {
     );
   }
 
-  /// 원본 영상을 휴지통으로 옮긴다. 옮기면 편집 화면을 비운다(자른 결과물은 그대로).
+  /// 원본 영상을 휴지통으로 옮긴다. 옮기면 편집 메뉴로 돌아간다(자른 결과물은 그대로).
   Future<void> _trashOriginal() async {
     final src = _sourceUri;
     if (src == null) return;
@@ -194,15 +195,8 @@ class _TrimScreenState extends State<TrimScreen> {
     if (!mounted) return;
     final moved = await confirmAndTrash(context, uris: [src], what: '원본 영상', keeps: '이미 잘라서 저장한 영상은 그대로 남아요.');
     if (!moved || !mounted) return;
-    final old = _ctrl;
-    setState(() {
-      _ctrl = null;
-      _info = null;
-      _sourceUri = null;
-      _thumbs = const [];
-      _still = null;
-    });
-    unawaited(old?.dispose().catchError((_) {}));
+    // 원본이 없어졌으니 편집 메뉴로 돌아간다.
+    MenuScreen.backTo(context);
   }
 
   // ---------------------------------------------------------------- playback

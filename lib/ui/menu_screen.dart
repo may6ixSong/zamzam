@@ -6,8 +6,45 @@ import 'merge_screen.dart';
 import 'theme.dart';
 import 'trim_screen.dart';
 
-class MenuScreen extends StatelessWidget {
+class MenuScreen extends StatefulWidget {
   const MenuScreen({super.key});
+
+  static int _open = 0;
+
+  /// 편집 화면에서 메뉴로 돌아간다. 아래에 메뉴가 열려 있으면 거기까지 닫고,
+  /// 없으면(다운로드 목록에서 열었을 때) 지금 화면을 메뉴로 바꾼다.
+  static void backTo(BuildContext context) {
+    final nav = Navigator.of(context);
+    if (_open > 0) {
+      nav.popUntil((r) => r.settings.name == routeName || r.isFirst);
+    } else {
+      nav.pushReplacement(route());
+    }
+  }
+
+  static const routeName = 'menu';
+
+  static Route<void> route() => MaterialPageRoute(
+    settings: const RouteSettings(name: routeName),
+    builder: (_) => const MenuScreen(),
+  );
+
+  @override
+  State<MenuScreen> createState() => _MenuScreenState();
+}
+
+class _MenuScreenState extends State<MenuScreen> {
+  @override
+  void initState() {
+    super.initState();
+    MenuScreen._open++;
+  }
+
+  @override
+  void dispose() {
+    MenuScreen._open--;
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,18 +80,18 @@ class MenuScreen extends StatelessWidget {
                     children: [
                       Expanded(child: cut),
                       const SizedBox(width: 16),
-                      Expanded(child: crop),
-                      const SizedBox(width: 16),
                       Expanded(child: merge),
+                      const SizedBox(width: 16),
+                      Expanded(child: crop),
                     ],
                   )
                 : Column(
                     children: [
                       Expanded(child: cut),
                       const SizedBox(height: 12),
-                      Expanded(child: crop),
-                      const SizedBox(height: 12),
                       Expanded(child: merge),
+                      const SizedBox(height: 12),
+                      Expanded(child: crop),
                     ],
                   );
             final hPad = wide ? 28.0 : 16.0;

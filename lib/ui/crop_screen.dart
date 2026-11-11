@@ -9,6 +9,7 @@ import '../core/time_format.dart';
 import '../core/trim_range.dart';
 import '../core/video_info.dart';
 import 'export_flow.dart';
+import 'menu_screen.dart';
 import 'theme.dart';
 import 'trash_flow.dart';
 import 'video_view.dart';
@@ -203,11 +204,8 @@ class _CropScreenState extends State<CropScreen> {
     if (src == null) return;
     final moved = await confirmAndTrash(context, uris: [src], what: '원본 영상', keeps: '이미 잘라서 저장한 영상은 그대로 남아요.');
     if (!moved || !mounted) return;
-    setState(() {
-      _info = null;
-      _sourceUri = null;
-      _frame = null;
-    });
+    // 원본이 없어졌으니 편집 메뉴로 돌아간다.
+    MenuScreen.backTo(context);
   }
 
   void _toast(String msg) {

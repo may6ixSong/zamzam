@@ -425,7 +425,7 @@ class _BrowserScreenState extends State<BrowserScreen> implements TabHost {
       case 'findVideos':
         showPageVideos(context, t);
       case 'editor':
-        Navigator.push(context, MaterialPageRoute(builder: (_) => const MenuScreen()));
+        Navigator.push(context, MenuScreen.route());
       case 'bookmarks':
         _manageFavorites();
       case 'history':
